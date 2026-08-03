@@ -61,6 +61,7 @@ CHAT_MODELS = [
 
 # Models that support the Agents/Conversations API (required for web search)
 AGENT_CAPABLE_MODELS = [
+    "mistral-small-latest",
     "mistral-medium-latest",
     "mistral-medium-2505",
     "mistral-large-latest",
