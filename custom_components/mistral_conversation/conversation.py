@@ -30,14 +30,20 @@ from .const import (
     CONF_PROMPT,
     CONF_TEMPERATURE,
     CONF_WEB_SEARCH,
+    CONF_WEB_SEARCH_MODE,
+    CONF_WEB_SEARCH_TRIGGER,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
     DEFAULT_WEB_SEARCH,
+    DEFAULT_WEB_SEARCH_MODE,
+    DEFAULT_WEB_SEARCH_TRIGGER,
     DOMAIN,
     MAX_TOOL_ITERATIONS,
     MISTRAL_API_BASE,
+    WEB_SEARCH_MODE_ALWAYS,
+    WEB_SEARCH_TOOL_NAME,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -99,6 +105,69 @@ def _to_mistral_id(ha_id: str) -> str:
     return hashlib.md5(ha_id.encode()).hexdigest()[:9]
 
 
+def _web_search_tool_def() -> dict[str, Any]:
+    """Return the synthetic ``web_search`` function tool offered to the model.
+
+    Mistral's built-in ``{"type": "web_search"}`` tool is rejected by
+    /v1/chat/completions, so web search is advertised as a normal function and
+    serviced by us against the Agents API. The description is what steers the
+    model, so it states both when to use it and when not to — without it the
+    model reaches for search on questions it can answer locally.
+    """
+    return {
+        "type": "function",
+        "function": {
+            "name": WEB_SEARCH_TOOL_NAME,
+            "description": (
+                "Search the public web for information you do not already know: "
+                "current events, news, sports results, prices, opening hours, or "
+                "facts that change over time. Do NOT use this to control or query "
+                "devices in this home, and do not use it for general knowledge you "
+                "can already answer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "The search query. Make it self-contained — resolve any "
+                            "pronouns or context from the conversation first."
+                        ),
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    }
+
+
+def _resolve_trigger(text: str, trigger: str) -> tuple[bool, str]:
+    """Match ``text`` against comma-separated trigger phrases.
+
+    Returns ``(matched, query)``. When matched, ``query`` is ``text`` with the
+    trigger phrase removed (a leading ``:`` or whitespace after it is stripped
+    too). If several phrases match, the LONGEST wins so that "zoek online"
+    beats a bare "zoek". Matching is case-insensitive and ignores surrounding
+    whitespace. An empty ``trigger`` never matches.
+
+    A stripped query can come back empty (utterance was only the phrase, e.g.
+    just "google"); callers must treat that as "no usable query".
+    """
+    phrases = [p.strip().lower() for p in (trigger or "").split(",") if p.strip()]
+    if not phrases:
+        return False, text
+
+    stripped = text.strip()
+    lowered = stripped.lower()
+    matches = [p for p in phrases if lowered.startswith(p)]
+    if not matches:
+        return False, text
+
+    matched = max(matches, key=len)
+    return True, stripped[len(matched):].lstrip(" :").strip()
+
+
 def _convert_chat_log_to_messages(
     chat_log: conversation.ChatLog,
 ) -> list[dict[str, Any]]:
@@ -119,6 +188,14 @@ def _convert_chat_log_to_messages(
             messages.append({"role": "user", "content": str(content.content)})
 
         elif isinstance(content, conversation.AssistantContent):
+            # Skip turns that carry neither text nor tool calls. Mistral rejects
+            # those with "Assistant message must have either content or
+            # tool_calls, but not none." (HTTP 400, code 3240). A turn like this
+            # occurs when the only tool call in it was intercepted by us (see
+            # the web_search interception in _async_handle_message).
+            if not content.content and not content.tool_calls:
+                continue
+
             if content.tool_calls:
                 all_have_results = all(tc.id in tool_results for tc in content.tool_calls)
                 if not all_have_results:
@@ -273,6 +350,43 @@ async def _async_stream_delta(
                         yield item
 
 
+async def _filter_intercepted_tool(
+    stream: AsyncGenerator[dict[str, Any], None],
+    tool_name: str,
+    collected: list[str],
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Strip calls to ``tool_name`` from a delta stream, collecting their queries.
+
+    The named tool is one we service ourselves (web search via the Agents API),
+    so HA must never see it — it isn't in HA's LLM API and executing it would
+    raise. Each intercepted call's ``query`` argument is appended to
+    ``collected``; a call with no usable query is dropped silently.
+
+    Deltas that end up with an empty ``tool_calls`` list are suppressed entirely,
+    since chat_log treats an empty list as a malformed delta.
+    """
+    async for delta in stream:
+        tool_calls = delta.get("tool_calls")
+        if not tool_calls:
+            yield delta
+            continue
+
+        kept = []
+        for tc in tool_calls:
+            if getattr(tc, "tool_name", None) != tool_name:
+                kept.append(tc)
+                continue
+            args = getattr(tc, "tool_args", None) or {}
+            query = args.get("query") if isinstance(args, dict) else None
+            if isinstance(query, str) and query.strip():
+                collected.append(query.strip())
+            else:
+                _LOGGER.debug("Ignoring %s call without a usable query", tool_name)
+
+        if kept:
+            yield {**delta, "tool_calls": kept}
+
+
 # ---------------------------------------------------------------------------
 # Entity
 # ---------------------------------------------------------------------------
@@ -343,39 +457,90 @@ class MistralConversationEntity(ConversationEntity):
         max_tokens = int(opts.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS))
         temperature = max(0.0, min(1.0, float(opts.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE))))
         web_search = opts.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH)
+        web_search_mode = opts.get(CONF_WEB_SEARCH_MODE, DEFAULT_WEB_SEARCH_MODE)
+        web_search_trigger = opts.get(
+            CONF_WEB_SEARCH_TRIGGER, DEFAULT_WEB_SEARCH_TRIGGER
+        )
 
-        # --- Web search path: Agents/Conversations API -------------------
-        if web_search and any(model.startswith(m) for m in AGENT_CAPABLE_MODELS):
-            system_content = chat_log.content[0] if chat_log.content else None
-            system_prompt = (
-                system_content.content if hasattr(system_content, "content") else ""
-            )
-            try:
-                ws_reply = await self._conversations_chat(
-                    model=model,
-                    system_prompt=system_prompt,
-                    user_text=user_input.text,
-                    conv_id=chat_log.conversation_id,
-                )
-            except HomeAssistantError as err:
-                _LOGGER.debug("Web search failed, falling back to chat completions: %s", err)
-                ws_reply = None
+        # Web search needs an agent-capable model — it is only reachable through
+        # the Agents/Conversations API.
+        web_search_available = web_search and any(
+            model.startswith(m) for m in AGENT_CAPABLE_MODELS
+        )
 
-            if ws_reply:
-                should_continue = continue_conversation_enabled and "?" in ws_reply
-                intent_response = intent.IntentResponse(language=user_input.language)
-                intent_response.async_set_speech(ws_reply)
-                return ConversationResult(
-                    response=intent_response,
-                    conversation_id=chat_log.conversation_id,
-                    continue_conversation=should_continue,
+        # Trigger phrases, when configured, are leading: a match goes straight to
+        # the Agents API and a non-match skips web search for this turn. An empty
+        # trigger list (the default) leaves the decision to web_search_mode.
+        trigger_matched, trigger_query = _resolve_trigger(
+            user_input.text, web_search_trigger if web_search_available else ""
+        )
+        has_trigger = bool((web_search_trigger or "").strip()) and web_search_available
+
+        # Offer web search as a tool only when the model is the one deciding.
+        offer_web_search_tool = (
+            web_search_available
+            and not has_trigger
+            and web_search_mode != WEB_SEARCH_MODE_ALWAYS
+        )
+        if offer_web_search_tool:
+            tools = (tools or []) + [_web_search_tool_def()]
+
+        # --- Direct web search path: Agents/Conversations API -------------
+        # Used when a trigger phrase matched, or in legacy "always" mode. This
+        # path carries no HA tools, so device control cannot happen on it.
+        use_direct_web_search = web_search_available and (
+            trigger_matched
+            or (not has_trigger and web_search_mode == WEB_SEARCH_MODE_ALWAYS)
+        )
+        if use_direct_web_search:
+            # A trigger-only utterance ("google") leaves nothing to search for;
+            # fall through to the normal path rather than querying for "".
+            search_text = trigger_query if trigger_matched else user_input.text
+            if not search_text.strip():
+                _LOGGER.debug(
+                    "Web search trigger matched but query was empty; "
+                    "falling through to chat completions"
                 )
+            else:
+                system_content = chat_log.content[0] if chat_log.content else None
+                system_prompt = (
+                    system_content.content if hasattr(system_content, "content") else ""
+                )
+                try:
+                    ws_reply = await self._conversations_chat(
+                        model=model,
+                        system_prompt=system_prompt,
+                        user_text=search_text,
+                        conv_id=chat_log.conversation_id,
+                    )
+                except HomeAssistantError as err:
+                    _LOGGER.debug(
+                        "Web search failed, falling back to chat completions: %s", err
+                    )
+                    ws_reply = None
+
+                if ws_reply:
+                    should_continue = continue_conversation_enabled and "?" in ws_reply
+                    intent_response = intent.IntentResponse(language=user_input.language)
+                    intent_response.async_set_speech(ws_reply)
+                    return ConversationResult(
+                        response=intent_response,
+                        conversation_id=chat_log.conversation_id,
+                        continue_conversation=should_continue,
+                    )
 
         # --- Standard path: chat completions with tool-call loop ---------
+        # Synthetic messages holding web-search results. They live only in the
+        # outgoing payload, never in chat_log, so conversation history stays a
+        # clean user/assistant transcript.
+        injected: list[dict[str, Any]] = []
+        # Queries the model asked us to search for, captured from the stream.
+        captured_searches: list[str] = []
+
         for _iteration in range(MAX_TOOL_ITERATIONS):
             payload: dict[str, Any] = _sanitize({
                 "model": model,
-                "messages": _convert_chat_log_to_messages(chat_log),
+                "messages": _convert_chat_log_to_messages(chat_log) + injected,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "stream": True,
@@ -384,8 +549,17 @@ class MistralConversationEntity(ConversationEntity):
                 payload["tools"] = tools
                 payload["tool_choice"] = "auto"
 
+            captured_searches.clear()
             try:
-                await self._stream_and_collect(payload, chat_log, user_input)
+                await self._stream_and_collect(
+                    payload,
+                    chat_log,
+                    user_input,
+                    intercept_tool=(
+                        WEB_SEARCH_TOOL_NAME if offer_web_search_tool else None
+                    ),
+                    intercepted=captured_searches,
+                )
             except HomeAssistantError:
                 raise
             except Exception as err:
@@ -393,6 +567,46 @@ class MistralConversationEntity(ConversationEntity):
                 raise HomeAssistantError(
                     f"Unexpected error talking to Mistral: {err}"
                 ) from err
+
+            # The model asked for a web search: service it against the Agents
+            # API and hand the result back on the next round. Checked before
+            # unresponded_tool_results, because an intercepted call leaves no
+            # pending tool result behind.
+            if captured_searches:
+                query = captured_searches[0]
+                _LOGGER.debug("Model requested web search: %s", query)
+                try:
+                    results = await self._conversations_chat(
+                        model=model,
+                        system_prompt=(
+                            "Answer the search query factually and concisely. "
+                            "Cite nothing; plain prose only."
+                        ),
+                        user_text=query,
+                        conv_id=chat_log.conversation_id,
+                    )
+                except HomeAssistantError as err:
+                    _LOGGER.debug("Web search lookup failed: %s", err)
+                    results = ""
+
+                injected.append({
+                    "role": "user",
+                    "content": (
+                        f'Web search results for "{query}":\n'
+                        f"{results or 'No results were returned.'}\n\n"
+                        "Using these results, answer my original question directly. "
+                        "Do not mention that you performed a search."
+                    ),
+                })
+                # Withdraw the tool so a turn can trigger at most one search and
+                # cannot loop on it.
+                tools = [
+                    t
+                    for t in (tools or [])
+                    if t.get("function", {}).get("name") != WEB_SEARCH_TOOL_NAME
+                ] or None
+                offer_web_search_tool = False
+                continue
 
             if not chat_log.unresponded_tool_results:
                 break
@@ -503,8 +717,16 @@ class MistralConversationEntity(ConversationEntity):
         payload: dict[str, Any],
         chat_log: conversation.ChatLog,
         user_input: ConversationInput,
+        intercept_tool: str | None = None,
+        intercepted: list[str] | None = None,
     ) -> None:
-        """POST to Mistral, stream deltas into chat_log."""
+        """POST to Mistral, stream deltas into chat_log.
+
+        When ``intercept_tool`` is set, calls to that tool are removed from the
+        delta stream before chat_log sees them and their ``query`` argument is
+        appended to ``intercepted``. HA would otherwise try to execute a tool
+        that isn't in its LLM API and raise.
+        """
         runtime = self._runtime
         try:
             async with runtime.session.post(
@@ -527,9 +749,15 @@ class MistralConversationEntity(ConversationEntity):
                         f"Mistral API error {resp.status}: {body}"
                     )
 
+                stream = _async_stream_delta(resp)
+                if intercept_tool is not None:
+                    stream = _filter_intercepted_tool(
+                        stream, intercept_tool, intercepted if intercepted is not None else []
+                    )
+
                 async for _content in chat_log.async_add_delta_content_stream(
                     user_input.agent_id,
-                    _async_stream_delta(resp),
+                    stream,
                 ):
                     pass
 

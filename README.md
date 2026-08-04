@@ -30,6 +30,7 @@
    - [Available models](#available-models)
    - [System prompt](#system-prompt)
    - [Continue conversation (Experimental)](#continue-conversation-experimental)
+   - [Web search (Beta)](#web-search-beta)
 7. [Controlling devices](#controlling-devices)
 8. [Using as a service action](#using-as-a-service-action)
 9. [Speech recognition (STT)](#speech-recognition-stt)
@@ -61,6 +62,7 @@ This integration makes **Mistral AI** available as a fully-featured conversation
 | Jinja2 system prompt | ✅ | Templates with `{{ now() }}`, `{{ ha_name }}` etc. |
 | Multilingual | ✅ | Responds in the user's language |
 | Continue conversation | ✅ | Keeps microphone open after questions (Experimental) |
+| Web search | ✅ | Model-decided web search via the Agents API, or trigger phrases (Beta) |
 | Separate devices | ✅ | Conversation and STT appear as separate HA devices |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -138,6 +140,9 @@ Click the integration → **Configure** to change settings.
 | **Max tokens** | `1024` | Maximum response length |
 | **Control HA** | On | Allow the AI to control exposed devices |
 | **Continue conversation** | Off | Keep listening after questions (Experimental) |
+| **Web search** | Off | Allow the AI to search the web (Beta) |
+| **Web search routing** | `Let the model decide` | How web search is triggered — see below |
+| **Web search trigger phrases** | *(empty)* | Optional phrases that force a web search — see below |
 | **STT language** | Auto-detect | Language for Voxtral transcription |
 | **TTS mode** | `Streaming` | `Streaming` (SSE WAV with sentence-level pipelining) or `Batch` (single MP3 request) |
 ### Available models
@@ -179,6 +184,45 @@ Do not use markdown formatting that cannot be read aloud, such as asterisks for 
 When enabled, the assistant automatically keeps the microphone open after any response that contains a question (`?`). This is implemented using the native `continue_conversation` flag in HA's `ConversationResult` — no separate automation is needed.
 
 > **Note:** This feature requires a satellite device that supports `assist_satellite.start_conversation`. Behaviour may vary between satellite types.
+
+### Web search (Beta)
+
+Web search is only available through Mistral's **Agents API**, which is a separate,
+slower endpoint than the regular chat completions call and **cannot carry Home
+Assistant tools**. A turn answered by the Agents API therefore cannot control
+your devices. Requires an agent-capable model (`mistral-small-latest`,
+`mistral-medium-latest` or `mistral-large-latest`).
+
+**Web search routing** controls when that endpoint is used:
+
+| Mode | Behaviour |
+|---|---|
+| **Let the model decide** (default) | Web search is offered to the model as a tool. It searches only when it judges a search is needed, and Home Assistant tools stay available — so one turn can search *and* control devices. |
+| **Always search** | Legacy behaviour: every request goes to the Agents API. Slower, and device control does not work on those turns. |
+
+> **Performance note:** enabling web search with **Always search** routes *every*
+> utterance — including "turn on the lamp" — through the Agents API. Use
+> **Let the model decide**, or set trigger phrases, to keep ordinary commands on
+> the fast path.
+
+**Web search trigger phrases** (optional) is a comma-separated list, for example:
+
+```
+search for, look up, google
+```
+
+When it is non-empty it **takes precedence over the routing mode**: only utterances
+that *start with* one of the phrases search the web (the phrase itself is stripped
+from the query), and every other utterance never searches. If several phrases
+match, the longest one wins. Matching is case-insensitive. Leave the field empty
+to let the routing mode decide.
+
+Trigger phrases are language-specific, so nothing is shipped by default. Dutch
+users might use `zoek op, zoek online, google`; German users `suche, google`.
+
+> Note: with trigger phrases set, a matching turn goes straight to the Agents API
+> and so cannot control devices — that is the same trade-off as **Always search**,
+> just limited to utterances you opt into.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -321,6 +365,15 @@ A: Mistral AI processes requests via their servers. See their [privacy policy](h
 ---
 
 ## Release Notes
+
+### Unreleased
+- **Fixed:** With web search enabled, *every* utterance was routed through the Agents API — including plain device commands. That path never passed Home Assistant tools, so device control silently failed on it (the model replies "I can't perform physical actions"). Web search is now opt-in per turn. Fixes #29.
+- **Added:** `web_search_mode` option. Default `model` advertises web search to the model as a tool and services the call against the Agents API, so a turn keeps its HA tools and can search *and* control devices. `always` preserves the previous behaviour.
+- **Added:** `web_search_trigger` option — optional comma-separated phrases (empty by default). When set it takes precedence over `web_search_mode`: only utterances starting with a phrase search (phrase stripped, longest match wins, case-insensitive); all others never search.
+- **Fixed:** Assistant turns carrying neither text nor tool calls are no longer sent to Mistral — they were rejected with HTTP 400 `Assistant message must have either content or tool_calls, but not none.` (code 3240).
+- **Added:** 29 unit tests for trigger resolution, tool-call interception, and the content-less-assistant-turn guard.
+
+---
 
 ### 2026.05 — 2026-05-04
 - **Changed:** Version numbering from digits to year.month.version format.

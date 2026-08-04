@@ -11,6 +11,8 @@ CONF_MAX_TOKENS = "max_tokens"
 CONF_TEMPERATURE = "temperature"
 CONF_CONTINUE_CONVERSATION = "continue_conversation"
 CONF_WEB_SEARCH = "web_search"
+CONF_WEB_SEARCH_MODE = "web_search_mode"
+CONF_WEB_SEARCH_TRIGGER = "web_search_trigger"
 CONF_STT_LANGUAGE = "stt_language"
 CONF_TTS_VOICE = "tts_voice"
 CONF_TTS_MODE = "tts_mode"
@@ -21,6 +23,22 @@ TTS_MODE_STREAM = "stream"
 TTS_MODE_BATCH = "batch"
 TTS_MODES = [TTS_MODE_STREAM, TTS_MODE_BATCH]
 
+# web_search_mode values
+#   model  — the model decides per turn by calling a `web_search` tool. Keeps
+#            HA tools available, so one turn can both search and control devices.
+#   always — legacy behaviour: every turn goes to the Agents API (no HA tools).
+WEB_SEARCH_MODE_MODEL = "model"
+WEB_SEARCH_MODE_ALWAYS = "always"
+WEB_SEARCH_MODES = [WEB_SEARCH_MODE_MODEL, WEB_SEARCH_MODE_ALWAYS]
+
+# Name of the synthetic function tool the model calls to request a web search.
+# Mistral's built-in {"type": "web_search"} tool is NOT accepted by
+# /v1/chat/completions (HTTP 400 "WebSearchTool connector is not supported",
+# code 1800) even though the API reference lists it in the `tools` union — it is
+# only honoured on /v1/agents and /v1/conversations. So we expose web search as
+# an ordinary function tool and service the call ourselves via the Agents API.
+WEB_SEARCH_TOOL_NAME = "web_search"
+
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -29,6 +47,13 @@ DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.7  # Mistral range: 0.0–1.0
 DEFAULT_CONTINUE_CONVERSATION = False
 DEFAULT_WEB_SEARCH = False
+DEFAULT_WEB_SEARCH_MODE = WEB_SEARCH_MODE_MODEL
+# Optional comma-separated trigger phrases. When non-empty they are LEADING:
+# an utterance starting with one of them is sent straight to the Agents API
+# (phrase stripped), and anything else skips web search entirely. Empty (the
+# default) leaves routing to `web_search_mode`. Opt-in by design — trigger
+# phrases are language-specific, so shipping a list would only fit some users.
+DEFAULT_WEB_SEARCH_TRIGGER = ""
 DEFAULT_STT_LANGUAGE = ""  # empty = Voxtral auto-detect
 DEFAULT_TTS_VOICE = "en_paul_neutral"
 DEFAULT_TTS_MODE = TTS_MODE_STREAM
