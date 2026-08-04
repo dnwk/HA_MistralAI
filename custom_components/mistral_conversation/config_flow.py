@@ -22,6 +22,8 @@ from .const import (
     CONF_TTS_MODE,
     CONF_TTS_VOICE,
     CONF_WEB_SEARCH,
+    CONF_WEB_SEARCH_MODE,
+    CONF_WEB_SEARCH_TRIGGER,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
@@ -30,10 +32,13 @@ from .const import (
     DEFAULT_TTS_MODE,
     DEFAULT_TTS_VOICE,
     DEFAULT_WEB_SEARCH,
+    DEFAULT_WEB_SEARCH_MODE,
+    DEFAULT_WEB_SEARCH_TRIGGER,
     DOMAIN,
     MISTRAL_API_BASE,
     TTS_MODES,
     TTS_VOICES,
+    WEB_SEARCH_MODES,
 )
 from .stt import LANGUAGE_OPTIONS
 
@@ -228,6 +233,34 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                         CONF_WEB_SEARCH,
                         default=opts.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH),
                     ): selector.BooleanSelector(),
+                    # ── Web search routing ────────────────────────────────
+                    # 'model': the model calls a web_search tool when it needs
+                    # one, keeping HA tools available on the same turn.
+                    # 'always': legacy — every turn goes to the Agents API,
+                    # which is slower and carries no HA tools.
+                    vol.Optional(
+                        CONF_WEB_SEARCH_MODE,
+                        default=opts.get(
+                            CONF_WEB_SEARCH_MODE, DEFAULT_WEB_SEARCH_MODE
+                        ),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=WEB_SEARCH_MODES,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="web_search_mode",
+                        )
+                    ),
+                    # ── Web search trigger phrases (optional) ─────────────
+                    # Comma-separated. When set, these take precedence over the
+                    # routing mode: only utterances starting with one of them
+                    # search (phrase stripped), everything else never does.
+                    # Empty = let the mode above decide.
+                    vol.Optional(
+                        CONF_WEB_SEARCH_TRIGGER,
+                        default=opts.get(
+                            CONF_WEB_SEARCH_TRIGGER, DEFAULT_WEB_SEARCH_TRIGGER
+                        ),
+                    ): selector.TextSelector(),
                     # ── TTS voice (fallback default) ──────────────────────
                     # Primary voice selection is in Settings → Voice Assistants.
                     # This setting is used as fallback when no voice is chosen
