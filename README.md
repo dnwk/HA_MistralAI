@@ -327,15 +327,19 @@ Selectable via **Settings → Devices & Services → Mistral AI Conversation →
 
 | Property | Value |
 |---|---|
-| Model | `voxtral-mini-tts-2603` |
+| Model | `voxtral-mini-tts-latest` |
 | Stream container | WAV (24 kHz, 16-bit, mono PCM) |
 | Batch container | MP3 (base64-wrapped JSON response) |
-| Voices | EN-US (Paul), GB (Jane, Oliver), FR (Marie) — emotion variants |
+| Voices | Fetched live from your account — Mistral presets plus your custom voices |
 
 ### Selecting a voice
 
-In **Settings → Devices & Services → Mistral AI Conversation → Configure**, choose from the available voices.
-The available voices are retrieved dynamically. Currently there are only voices for EN, GB and FR available. 
+The voice list is fetched live from Mistral's `/v1/audio/voices` API, so it always reflects your account: all Mistral preset voices plus any custom voices you have created, shown with their human-readable names. If the fetch fails (network error, API issue) a built-in static list of preset voices is used as fallback.
+
+Two places to pick a voice:
+
+1. **Settings → Voice Assistants → your assistant → Text-to-speech voice** — the primary selection, refreshed when the integration (re)loads.
+2. **Settings → Devices & Services → Mistral AI Conversation → Configure → Text-to-speech voice** — the fallback default, used when no voice is chosen in the Voice Assistants dialog or when TTS is called from an automation. This dropdown re-fetches the live list every time you open it, so a newly created custom voice appears here without a restart.
 
 <p align=right>(<a href=#readme-top>back to top</a>)</p>
 ---
@@ -367,6 +371,8 @@ A: Mistral AI processes requests via their servers. See their [privacy policy](h
 ## Release Notes
 
 ### Unreleased
+- **Changed:** TTS model switched from `voxtral-mini-tts-2603` to `voxtral-mini-tts-latest`, so the integration tracks Mistral's current TTS model automatically.
+- **Changed:** TTS voices are now pulled live from `GET /v1/audio/voices` everywhere — the options-flow dropdown (previously a static list) now shows the account's presets and custom voices with human-readable names, re-fetched each time the Configure dialog opens. The static `TTS_VOICES` list remains only as fallback when the fetch fails, and a previously saved legacy voice id still renders as selected.
 - **Fixed:** With web search enabled, *every* utterance was routed through the Agents API — including plain device commands. That path never passed Home Assistant tools, so device control silently failed on it (the model replies "I can't perform physical actions"). Web search is now opt-in per turn. Fixes #29.
 - **Added:** `web_search_mode` option. Default `model` advertises web search to the model as a tool and services the call against the Agents API, so a turn keeps its HA tools and can search *and* control devices. `always` preserves the previous behaviour.
 - **Added:** `web_search_trigger` option — optional comma-separated phrases (empty by default). When set it takes precedence over `web_search_mode`: only utterances starting with a phrase search (phrase stripped, longest match wins, case-insensitive); all others never search.
