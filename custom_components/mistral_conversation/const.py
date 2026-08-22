@@ -100,7 +100,7 @@ STT_MODEL = "voxtral-mini-latest"
 # ---------------------------------------------------------------------------
 # TTS
 # ---------------------------------------------------------------------------
-TTS_MODEL = "voxtral-mini-tts-2603"
+TTS_MODEL = "voxtral-mini-tts-latest"
 
 # Available voices per Mistral TTS documentation (voxtral-mini-tts-2603)
 TTS_VOICES = [

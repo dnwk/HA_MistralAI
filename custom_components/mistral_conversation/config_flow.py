@@ -41,6 +41,7 @@ from .const import (
     WEB_SEARCH_MODES,
 )
 from .stt import LANGUAGE_OPTIONS
+from .voices import async_fetch_voice_items
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -160,6 +161,37 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
 
         opts = self.config_entry.options
 
+        # TTS voice options — live account list (presets + custom voices,
+        # label = human-readable name, value = voice UUID). Falls back to the
+        # static TTS_VOICES ids if the fetch fails so the dropdown is never
+        # empty. The currently saved voice is appended if absent (e.g. a
+        # legacy static id, or the live fetch failed) so the stored option
+        # still renders as selected.
+        voice_items = await async_fetch_voice_items(
+            async_get_clientsession(self.hass),
+            {"Authorization": f"Bearer {self.config_entry.data[CONF_API_KEY]}"},
+        )
+        if voice_items:
+            voice_options = [
+                selector.SelectOptionDict(label=name, value=vid)
+                for vid, name in voice_items
+            ]
+        else:
+            voice_options = [
+                selector.SelectOptionDict(
+                    label=v.replace("_", " ").title(), value=v
+                )
+                for v in TTS_VOICES
+            ]
+        current_voice = opts.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
+        if current_voice not in {o["value"] for o in voice_options}:
+            voice_options.append(
+                selector.SelectOptionDict(
+                    label=current_voice.replace("_", " ").title(),
+                    value=current_voice,
+                )
+            )
+
         # Build LLM API options list
         hass_apis = [
             selector.SelectOptionDict(label=api.name, value=api.id)
@@ -267,10 +299,10 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                     # there, or when TTS is called directly from an automation.
                     vol.Optional(
                         CONF_TTS_VOICE,
-                        default=opts.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE),
+                        default=current_voice,
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=TTS_VOICES,
+                            options=voice_options,
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),

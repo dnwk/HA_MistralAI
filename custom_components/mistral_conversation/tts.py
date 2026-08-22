@@ -62,6 +62,7 @@ from .const import (
     TTS_VOICES,
     TTS_WAV_HEADER_SIZE,
 )
+from .voices import async_fetch_voice_items
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -180,43 +181,14 @@ class MistralTTSEntity(TextToSpeechEntity):
         the picker). On any failure — network error, non-2xx, empty list —
         this returns the static TTS_VOICES list so the picker is never empty.
         """
-        static_fallback = [
-            Voice(voice_id=v, name=v.replace("_", " ").title()) for v in TTS_VOICES
-        ]
         runtime = self._runtime
-        try:
-            async with runtime.session.get(
-                f"{MISTRAL_API_BASE}/audio/voices",
-                headers=runtime.headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status >= 400:
-                    body = await resp.text()
-                    _LOGGER.warning(
-                        "Mistral voices fetch HTTP %s — using static list. body=%s",
-                        resp.status,
-                        body,
-                    )
-                    return static_fallback
-                data = await resp.json()
-        except aiohttp.ClientError as err:
-            _LOGGER.warning(
-                "Mistral voices fetch failed (%s) — using static list.", err
-            )
-            return static_fallback
-
-        items = data.get("items") or []
-        voices = [
-            Voice(voice_id=item["id"], name=item.get("name") or item["id"])
-            for item in items
-            if item.get("id")
-        ]
-        if not voices:
-            _LOGGER.warning("Mistral voices list empty — using static list.")
-            return static_fallback
-
-        _LOGGER.debug("Loaded %d Mistral voices from account", len(voices))
-        return voices
+        items = await async_fetch_voice_items(runtime.session, runtime.headers)
+        if items is None:
+            return [
+                Voice(voice_id=v, name=v.replace("_", " ").title())
+                for v in TTS_VOICES
+            ]
+        return [Voice(voice_id=vid, name=name) for vid, name in items]
 
     # ------------------------------------------------------------------
     # Batch path
