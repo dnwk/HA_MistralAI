@@ -56,8 +56,9 @@ This integration makes **Mistral AI** available as a fully-featured conversation
 | Conversation agent in HA Assist | ✅ | Selectable as agent in Voice Assistants |
 | Smart home control | ✅ | Control lights, switches, covers, locks, etc. |
 | Speech recognition (STT) | ✅ | Voxtral Mini via `/v1/audio/transcriptions` |
-| Text-to-speech (TTS) | ✅ | Mistral TTS via `/v1/audio/speech` with multiple voices |
+| Text-to-speech (TTS) | ✅ | Mistral TTS (`voxtral-mini-tts-latest`) via `/v1/audio/speech` |
 | Streaming TTS | ✅ | Low-latency SSE WAV with sentence-level pipelining (≥ v0.4.0) |
+| Live TTS voice list | ✅ | Voices fetched from your Mistral account — presets *and* custom voices |
 | Conversation memory | ✅ | Context kept per session until 5 min idle (HA timeout). |
 | Jinja2 system prompt | ✅ | Templates with `{{ now() }}`, `{{ ha_name }}` etc. |
 | Multilingual | ✅ | Responds in the user's language |
@@ -144,6 +145,7 @@ Click the integration → **Configure** to change settings.
 | **Web search routing** | `Let the model decide` | How web search is triggered — see below |
 | **Web search trigger phrases** | *(empty)* | Optional phrases that force a web search — see below |
 | **STT language** | Auto-detect | Language for Voxtral transcription |
+| **TTS voice** | `en_paul_neutral` | Fallback default voice — dropdown lists your account's live voices (presets + custom) |
 | **TTS mode** | `Streaming` | `Streaming` (SSE WAV with sentence-level pipelining) or `Batch` (single MP3 request) |
 ### Available models
 
