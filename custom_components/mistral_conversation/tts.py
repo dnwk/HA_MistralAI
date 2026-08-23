@@ -62,7 +62,7 @@ from .const import (
     TTS_VOICES,
     TTS_WAV_HEADER_SIZE,
 )
-from .voices import async_fetch_voice_items
+from .voices import VoiceItem, async_fetch_voice_items
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +70,57 @@ _LOGGER = logging.getLogger(__name__)
 # PCM silence at any sample rate / channel count. Yielded between sentences
 # in the pipelined streaming engine to produce natural inter-sentence pauses.
 _INTER_SENTENCE_SILENCE: bytes = bytes(TTS_INTER_SENTENCE_SILENCE_BYTES)
+
+# Static preset ids encode their language as a prefix ("en_paul_neutral",
+# "gb_jane_neutral"). Maps an HA language code to the static-id prefixes that
+# speak it, used only for ordering the static fallback list.
+_STATIC_LANG_PREFIXES: dict[str, tuple[str, ...]] = {
+    "en": ("en_", "gb_"),
+    "fr": ("fr_",),
+}
+
+
+def _base_lang(language: str) -> str:
+    """Reduce 'en-GB' / 'en_US' / 'en' to the base code 'en'."""
+    return language.replace("_", "-").split("-")[0].lower()
+
+
+def _sorted_voices(items: list[VoiceItem], language: str) -> list[Voice]:
+    """All account voices, language-matching ones first.
+
+    Mistral voices are multilingual (one voice speaks all supported
+    languages), so nothing is filtered out — hiding voices is what this
+    ordering exists to avoid. Ranking: voices whose ``languages`` metadata
+    matches the requested language first, then voices with no language
+    metadata (custom clones), then everything else; alphabetical inside
+    each rank.
+    """
+    base = _base_lang(language)
+
+    def rank(item: VoiceItem) -> tuple[int, str]:
+        if not item.languages:
+            return (1, item.name.lower())
+        if any(_base_lang(lang) == base for lang in item.languages):
+            return (0, item.name.lower())
+        return (2, item.name.lower())
+
+    return [
+        Voice(voice_id=item.voice_id, name=item.name)
+        for item in sorted(items, key=rank)
+    ]
+
+
+def _static_voices(language: str) -> list[Voice]:
+    """Static TTS_VOICES fallback, language-matching ids first."""
+    prefixes = _STATIC_LANG_PREFIXES.get(_base_lang(language), ())
+
+    def rank(vid: str) -> tuple[int, str]:
+        return (0 if vid.startswith(prefixes) else 1, vid) if prefixes else (0, vid)
+
+    return [
+        Voice(voice_id=v, name=v.replace("_", " ").title())
+        for v in sorted(TTS_VOICES, key=rank)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +161,13 @@ class MistralTTSEntity(TextToSpeechEntity):
         self.hass = hass
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_tts"
-        # Populated once in async_added_to_hass from GET /v1/audio/voices.
-        # None means "not fetched yet" → async_get_supported_voices() falls
-        # back to the static TTS_VOICES list.
-        self._voice_cache: list[Voice] | None = None
+        # Populated in async_added_to_hass from GET /v1/audio/voices (all
+        # pages — presets + custom). None means "not fetched yet or fetch
+        # failed" → async_get_supported_voices() falls back to the static
+        # TTS_VOICES list AND schedules a background re-fetch so a transient
+        # startup failure doesn't pin the picker to the static list forever.
+        self._voice_cache: list[VoiceItem] | None = None
+        self._voice_refresh_task: asyncio.Task | None = None
 
     async def async_added_to_hass(self) -> None:
         """Fetch the account's voice list once the entity is registered.
@@ -121,10 +175,13 @@ class MistralTTSEntity(TextToSpeechEntity):
         async_get_supported_voices() is a synchronous HA callback and cannot
         await, so the network round-trip to GET /v1/audio/voices has to
         happen here and be cached. Failures degrade gracefully to the static
-        list — see _async_fetch_voices.
+        list, and are retried lazily — see async_get_supported_voices.
         """
         await super().async_added_to_hass()
-        self._voice_cache = await self._async_fetch_voices()
+        runtime = self._runtime
+        self._voice_cache = await async_fetch_voice_items(
+            runtime.session, runtime.headers
+        )
 
     @property
     def _runtime(self):
@@ -165,30 +222,35 @@ class MistralTTSEntity(TextToSpeechEntity):
         """Return available Mistral TTS voices for the Voice Assistants dialog.
 
         Prefers the account voice list fetched in async_added_to_hass —
-        presets *and* custom voices, each with its human-readable name and
-        its real voice_id (a UUID). Falls back to the static TTS_VOICES list
-        if the fetch hasn't finished yet or failed.
+        every page of presets *and* custom voices, each with its
+        human-readable name and its real voice_id (a UUID), ordered so
+        voices matching *language* come first (nothing is hidden — Mistral
+        voices are multilingual). Falls back to the static TTS_VOICES list
+        if the fetch hasn't finished yet or failed, and schedules a
+        background re-fetch so the next dialog open shows the live list.
         """
         if self._voice_cache is not None:
-            return self._voice_cache
-        return [Voice(voice_id=v, name=v.replace("_", " ").title()) for v in TTS_VOICES]
+            return _sorted_voices(self._voice_cache, language)
+        self._schedule_voice_refresh()
+        return _static_voices(language)
 
-    async def _async_fetch_voices(self) -> list[Voice]:
-        """Fetch all voices (presets + custom) from the Mistral account.
+    def _schedule_voice_refresh(self) -> None:
+        """Kick off a background re-fetch of the account voice list.
 
-        GET /v1/audio/voices returns items carrying a separate ``id`` (UUID,
-        used as voice_id in synthesis) and ``name`` (human-readable, shown in
-        the picker). On any failure — network error, non-2xx, empty list —
-        this returns the static TTS_VOICES list so the picker is never empty.
+        Called from the sync voice-list callback when the cache is missing
+        (startup fetch failed, e.g. network not up yet). No-op while a
+        refresh is already in flight.
         """
-        runtime = self._runtime
-        items = await async_fetch_voice_items(runtime.session, runtime.headers)
-        if items is None:
-            return [
-                Voice(voice_id=v, name=v.replace("_", " ").title())
-                for v in TTS_VOICES
-            ]
-        return [Voice(voice_id=vid, name=name) for vid, name in items]
+        if self._voice_refresh_task is not None and not self._voice_refresh_task.done():
+            return
+
+        async def _refresh() -> None:
+            runtime = self._runtime
+            self._voice_cache = await async_fetch_voice_items(
+                runtime.session, runtime.headers
+            )
+
+        self._voice_refresh_task = self.hass.async_create_task(_refresh())
 
     # ------------------------------------------------------------------
     # Batch path

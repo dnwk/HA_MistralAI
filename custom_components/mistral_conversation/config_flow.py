@@ -173,8 +173,8 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
         )
         if voice_items:
             voice_options = [
-                selector.SelectOptionDict(label=name, value=vid)
-                for vid, name in voice_items
+                selector.SelectOptionDict(label=item.name, value=item.voice_id)
+                for item in sorted(voice_items, key=lambda i: i.name.lower())
             ]
         else:
             voice_options = [
