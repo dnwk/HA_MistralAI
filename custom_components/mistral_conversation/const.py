@@ -31,6 +31,24 @@ WEB_SEARCH_MODE_MODEL = "model"
 WEB_SEARCH_MODE_ALWAYS = "always"
 WEB_SEARCH_MODES = [WEB_SEARCH_MODE_MODEL, WEB_SEARCH_MODE_ALWAYS]
 
+# Name and instructions of the server-side Mistral Agent that services web
+# searches. The instructions are deliberately STATIC and generic: the agent
+# object persists in the user's Mistral account, so the rendered HA system
+# prompt (which can include the exposed entity/area list) must never be used
+# here — that would store a snapshot of the home's layout with a third party.
+WEB_SEARCH_AGENT_NAME = "HA Mistral Web Search"
+WEB_SEARCH_AGENT_INSTRUCTIONS = (
+    "You are a web search assistant for a smart-home voice interface. Use web "
+    "search to answer the user's query, then reply factually and concisely in "
+    "the language of the query. Plain prose only, suitable for text-to-speech: "
+    "no markdown, no lists, no citations."
+)
+
+# Cap on remembered HA-conversation → Mistral-conversation mappings (oldest
+# evicted first). Bounds memory over long uptimes; an evicted mapping just
+# means the next search in that HA conversation starts a fresh Mistral thread.
+WEB_SEARCH_CONV_CACHE_MAX = 32
+
 # Name of the synthetic function tool the model calls to request a web search.
 # Mistral's built-in {"type": "web_search"} tool is NOT accepted by
 # /v1/chat/completions (HTTP 400 "WebSearchTool connector is not supported",

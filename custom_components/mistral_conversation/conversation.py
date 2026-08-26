@@ -42,6 +42,9 @@ from .const import (
     DOMAIN,
     MAX_TOOL_ITERATIONS,
     MISTRAL_API_BASE,
+    WEB_SEARCH_AGENT_INSTRUCTIONS,
+    WEB_SEARCH_AGENT_NAME,
+    WEB_SEARCH_CONV_CACHE_MAX,
     WEB_SEARCH_MODE_ALWAYS,
     WEB_SEARCH_TOOL_NAME,
 )
@@ -528,14 +531,9 @@ class MistralConversationEntity(ConversationEntity):
                     "falling through to chat completions"
                 )
             else:
-                system_content = chat_log.content[0] if chat_log.content else None
-                system_prompt = (
-                    system_content.content if hasattr(system_content, "content") else ""
-                )
                 try:
                     ws_reply = await self._conversations_chat(
                         model=model,
-                        system_prompt=system_prompt,
                         user_text=search_text,
                         conv_id=chat_log.conversation_id,
                     )
@@ -604,10 +602,6 @@ class MistralConversationEntity(ConversationEntity):
                 try:
                     results = await self._conversations_chat(
                         model=model,
-                        system_prompt=(
-                            "Answer the search query factually and concisely. "
-                            "Cite nothing; plain prose only."
-                        ),
                         user_text=query,
                         conv_id=chat_log.conversation_id,
                     )
@@ -646,23 +640,36 @@ class MistralConversationEntity(ConversationEntity):
     # ------------------------------------------------------------------
     # Agents / Conversations API for web search
     # ------------------------------------------------------------------
-    async def _ensure_web_search_agent(self, model: str, system_prompt: str) -> str:
-        """Create (or reuse) a Mistral Agent with web_search enabled."""
+    async def _ensure_web_search_agent(self, model: str) -> str:
+        """Return the ID of the Mistral web-search Agent, creating it if needed.
+
+        The agent's instructions are the static WEB_SEARCH_AGENT_INSTRUCTIONS —
+        never the rendered HA system prompt, which can contain the exposed
+        entity/area list and would otherwise persist server-side in the user's
+        Mistral account. Before creating, existing agents are listed and one
+        matching our name and model is reused, so restarts don't accumulate a
+        new agent each time (the in-memory cache alone can't prevent that).
+        """
         runtime = self._runtime
         if runtime.web_search_agent_id:
             return runtime.web_search_agent_id
 
+        if agent_id := await self._find_web_search_agent(model):
+            runtime.web_search_agent_id = agent_id
+            _LOGGER.debug("Reusing Mistral web-search agent: %s", agent_id)
+            return agent_id
+
         payload = _sanitize({
             "model": model,
-            "name": "HA Mistral Web Search",
+            "name": WEB_SEARCH_AGENT_NAME,
             "description": "Home Assistant conversation agent with web search",
-            "instructions": system_prompt,
+            "instructions": WEB_SEARCH_AGENT_INSTRUCTIONS,
             "tools": [{"type": "web_search"}],
             "completion_args": {"temperature": 0.3, "top_p": 0.95},
         })
-        async with self._runtime.session.post(
+        async with runtime.session.post(
             f"{MISTRAL_API_BASE}/agents",
-            headers=self._runtime.headers,
+            headers=runtime.headers,
             json=payload,
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
@@ -673,22 +680,56 @@ class MistralConversationEntity(ConversationEntity):
                 )
             data = await resp.json()
             agent_id = data["id"]
-            self._runtime.web_search_agent_id = agent_id
+            runtime.web_search_agent_id = agent_id
             _LOGGER.debug("Created Mistral web-search agent: %s", agent_id)
             return agent_id
+
+    async def _find_web_search_agent(self, model: str) -> str | None:
+        """Look up an already-created web-search agent on the account.
+
+        Matches on our agent name and the configured model (a model change
+        gets its own agent rather than silently reusing the old one). Any
+        failure returns None so the caller falls back to creating an agent —
+        reuse is an optimisation, never a requirement.
+        """
+        runtime = self._runtime
+        try:
+            async with runtime.session.get(
+                f"{MISTRAL_API_BASE}/agents",
+                params={"page": 0, "page_size": 100},
+                headers=runtime.headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status >= 400:
+                    _LOGGER.debug("Mistral agents list HTTP %s", resp.status)
+                    return None
+                data = await resp.json()
+        except aiohttp.ClientError as err:
+            _LOGGER.debug("Mistral agents list failed: %s", err)
+            return None
+
+        agents = data if isinstance(data, list) else data.get("data") or []
+        for item in agents:
+            if (
+                isinstance(item, dict)
+                and item.get("name") == WEB_SEARCH_AGENT_NAME
+                and item.get("model") == model
+                and item.get("id")
+            ):
+                return item["id"]
+        return None
 
     async def _conversations_chat(
         self,
         model: str,
-        system_prompt: str,
         user_text: str,
         conv_id: str,
     ) -> str:
         """Use the Mistral Conversations API (beta) with web search."""
         runtime = self._runtime
-        agent_id = await self._ensure_web_search_agent(model, system_prompt)
+        agent_id = await self._ensure_web_search_agent(model)
 
-        mistral_conv_id = getattr(runtime, "_ws_convs", {}).get(conv_id)
+        mistral_conv_id = runtime.web_search_conversations.get(conv_id)
         if mistral_conv_id:
             url = f"{MISTRAL_API_BASE}/conversations/{mistral_conv_id}"
             payload: dict[str, Any] = {"inputs": user_text}
@@ -711,9 +752,13 @@ class MistralConversationEntity(ConversationEntity):
 
         new_conv_id = data.get("conversation_id") or data.get("id")
         if new_conv_id:
-            if not hasattr(runtime, "_ws_convs"):
-                runtime._ws_convs = {}
-            runtime._ws_convs[conv_id] = new_conv_id
+            # Insertion order doubles as recency: re-insert on every use and
+            # evict from the front when over the cap.
+            convs = runtime.web_search_conversations
+            convs.pop(conv_id, None)
+            convs[conv_id] = new_conv_id
+            while len(convs) > WEB_SEARCH_CONV_CACHE_MAX:
+                convs.pop(next(iter(convs)))
 
         parts: list[str] = []
         for output in data.get("outputs", []):
