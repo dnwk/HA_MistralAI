@@ -55,8 +55,8 @@ This integration makes **Mistral AI** available as a fully-featured conversation
 |---|---|---|
 | Conversation agent in HA Assist | ✅ | Selectable as agent in Voice Assistants |
 | Smart home control | ✅ | Control lights, switches, covers, locks, etc. |
-| Speech recognition (STT) | ✅ | Voxtral Mini via `/v1/audio/transcriptions` |
-| Text-to-speech (TTS) | ✅ | Mistral TTS (`voxtral-mini-tts-latest`) via `/v1/audio/speech` |
+| Speech recognition (STT) | ✅ | Voxtral (`voxtral-mini-latest` by default, configurable) via `/v1/audio/transcriptions` |
+| Text-to-speech (TTS) | ✅ | Mistral TTS (`voxtral-mini-tts-latest` by default, configurable) via `/v1/audio/speech` |
 | Streaming TTS | ✅ | Low-latency SSE WAV with sentence-level pipelining (≥ v0.4.0) |
 | Live TTS voice list | ✅ | Voices fetched from your Mistral account — presets *and* custom voices |
 | Conversation memory | ✅ | Context kept per session until 5 min idle (HA timeout). |
@@ -144,6 +144,8 @@ Click the integration → **Configure** to change settings.
 | **Web search** | Off | Allow the AI to search the web (Beta) |
 | **Web search routing** | `Let the model decide` | How web search is triggered — see below |
 | **Web search trigger phrases** | *(empty)* | Optional phrases that force a web search — see below |
+| **Speech-to-text model** | `voxtral-mini-latest` | Voxtral transcription model — dropdown lists the Voxtral speech models on your account; any model ID can also be typed |
+| **Text-to-speech model** | `voxtral-mini-tts-latest` | Voxtral TTS model — dropdown lists the TTS models on your account; any model ID can also be typed |
 | **STT language** | Auto-detect | Language for Voxtral transcription |
 | **TTS voice** | `en_paul_neutral` | Fallback default voice — dropdown lists your account's live voices (presets + custom) |
 | **TTS mode** | `Streaming` | `Streaming` (SSE WAV with sentence-level pipelining) or `Batch` (single MP3 request) |
@@ -303,7 +305,7 @@ A `stt.mistral_ai_stt_voxtral` entity is registered automatically.
 
 | Property | Value |
 |---|---|
-| Model | `voxtral-mini-latest` |
+| Model | `voxtral-mini-latest` by default — change it under **Configure → Speech-to-text model** |
 | Supported format | WAV (16-bit, 16 kHz, mono PCM) |
 | Languages | 60+ with auto-detect |
 | Pricing | ~$0.003 per minute |
@@ -336,7 +338,7 @@ Selectable via **Settings → Devices & Services → Mistral AI Conversation →
 
 | Property | Value |
 |---|---|
-| Model | `voxtral-mini-tts-latest` |
+| Model | `voxtral-mini-tts-latest` by default — change it under **Configure → Text-to-speech model** |
 | Stream container | WAV (24 kHz, 16-bit, mono PCM) |
 | Batch container | MP3 (base64-wrapped JSON response) |
 | Voices | Fetched live from your account — Mistral presets plus your custom voices |
@@ -380,6 +382,7 @@ A: Mistral AI processes requests via their servers. See their [privacy policy](h
 ## Release Notes
 
 ### Unreleased
+- **Added:** *Speech-to-text model* and *Text-to-speech model* options (Settings → Devices & Services → Mistral AI Conversation → Configure). Each dropdown lists the Voxtral models available on your Mistral account (from `GET /v1/models`, realtime models excluded) and also accepts any typed model ID. The defaults stay `voxtral-mini-latest` and `voxtral-mini-tts-latest`; existing setups are unchanged. Saving reloads the integration, and STT/TTS error logs now name the model used.
 - **Changed:** TTS model switched from `voxtral-mini-tts-2603` to `voxtral-mini-tts-latest`, so the integration tracks Mistral's current TTS model automatically.
 - **Changed:** TTS voices are now pulled live from `GET /v1/audio/voices` everywhere — the options-flow dropdown (previously a static list) now shows the account's presets and custom voices with human-readable names, re-fetched each time the Configure dialog opens. The static `TTS_VOICES` list remains only as fallback when the fetch fails, and a previously saved legacy voice id still renders as selected.
 - **Fixed:** With web search enabled, *every* utterance was routed through the Agents API — including plain device commands. That path never passed Home Assistant tools, so device control silently failed on it (the model replies "I can't perform physical actions"). Web search is now opt-in per turn. Fixes #29.

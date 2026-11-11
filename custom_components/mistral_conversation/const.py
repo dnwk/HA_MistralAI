@@ -14,6 +14,8 @@ CONF_WEB_SEARCH = "web_search"
 CONF_WEB_SEARCH_MODE = "web_search_mode"
 CONF_WEB_SEARCH_TRIGGER = "web_search_trigger"
 CONF_STT_LANGUAGE = "stt_language"
+CONF_STT_MODEL = "stt_model"
+CONF_TTS_MODEL = "tts_model"
 CONF_TTS_VOICE = "tts_voice"
 CONF_TTS_MODE = "tts_mode"
 # Note: device control uses HA's native CONF_LLM_HASS_API from homeassistant.const
@@ -132,12 +134,14 @@ AGENT_CAPABLE_MODELS = [
 # ---------------------------------------------------------------------------
 # STT
 # ---------------------------------------------------------------------------
-STT_MODEL = "voxtral-mini-latest"
+# Default speech-to-text model; overridable via the CONF_STT_MODEL option.
+DEFAULT_STT_MODEL = "voxtral-mini-latest"
 
 # ---------------------------------------------------------------------------
 # TTS
 # ---------------------------------------------------------------------------
-TTS_MODEL = "voxtral-mini-tts-latest"
+# Default text-to-speech model; overridable via the CONF_TTS_MODEL option.
+DEFAULT_TTS_MODEL = "voxtral-mini-tts-latest"
 
 # Available voices per Mistral TTS documentation (voxtral-mini-tts-2603)
 TTS_VOICES = [

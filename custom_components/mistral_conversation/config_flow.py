@@ -1,6 +1,7 @@
 """Config flow for Mistral AI Conversation."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -18,8 +19,10 @@ from .const import (
     CONF_MAX_TOKENS,
     CONF_MODEL,
     CONF_PROMPT,
+    CONF_STT_MODEL,
     CONF_TEMPERATURE,
     CONF_TTS_MODE,
+    CONF_TTS_MODEL,
     CONF_TTS_VOICE,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_MODE,
@@ -28,8 +31,10 @@ from .const import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
     DEFAULT_PROMPT,
+    DEFAULT_STT_MODEL,
     DEFAULT_TEMPERATURE,
     DEFAULT_TTS_MODE,
+    DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_MODE,
@@ -39,6 +44,11 @@ from .const import (
     TTS_MODES,
     TTS_VOICES,
     WEB_SEARCH_MODES,
+)
+from .audio_models import (
+    async_fetch_audio_models,
+    configured_model,
+    model_choices,
 )
 from .stt import LANGUAGE_OPTIONS
 from .voices import async_fetch_voice_items
@@ -157,9 +167,38 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
             # Clean up empty LLM API selection
             if not user_input.get(CONF_LLM_HASS_API):
                 user_input.pop(CONF_LLM_HASS_API, None)
+            # Typed model IDs: trim whitespace; a blank entry means "use the
+            # default", so drop it instead of storing an empty string.
+            for key in (CONF_STT_MODEL, CONF_TTS_MODEL):
+                value = (user_input.get(key) or "").strip()
+                if value:
+                    user_input[key] = value
+                else:
+                    user_input.pop(key, None)
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.config_entry.options
+        session = async_get_clientsession(self.hass)
+        auth = {"Authorization": f"Bearer {self.config_entry.data[CONF_API_KEY]}"}
+
+        # Voices and audio models are independent lookups; fetch both at once
+        # so opening the dialog costs one round-trip of latency, not two.
+        voice_items, (stt_models, tts_models) = await asyncio.gather(
+            async_fetch_voice_items(session, auth),
+            async_fetch_audio_models(session, auth),
+        )
+
+        # STT/TTS model dropdowns: default first, then the account's Voxtral
+        # models, then the saved value if it is not listed. custom_value lets
+        # the user type any model ID Mistral accepts.
+        current_stt_model = configured_model(opts, CONF_STT_MODEL, DEFAULT_STT_MODEL)
+        current_tts_model = configured_model(opts, CONF_TTS_MODEL, DEFAULT_TTS_MODEL)
+        stt_model_options = model_choices(
+            DEFAULT_STT_MODEL, stt_models, current_stt_model
+        )
+        tts_model_options = model_choices(
+            DEFAULT_TTS_MODEL, tts_models, current_tts_model
+        )
 
         # TTS voice options — live account list (presets + custom voices,
         # label = human-readable name, value = voice UUID). Falls back to the
@@ -167,10 +206,6 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
         # empty. The currently saved voice is appended if absent (e.g. a
         # legacy static id, or the live fetch failed) so the stored option
         # still renders as selected.
-        voice_items = await async_fetch_voice_items(
-            async_get_clientsession(self.hass),
-            {"Authorization": f"Bearer {self.config_entry.data[CONF_API_KEY]}"},
-        )
         if voice_items:
             voice_options = [
                 selector.SelectOptionDict(label=item.name, value=item.voice_id)
@@ -294,6 +329,28 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                             CONF_WEB_SEARCH_TRIGGER, DEFAULT_WEB_SEARCH_TRIGGER
                         ),
                     ): selector.TextSelector(),
+                    # ── Speech-to-text model ──────────────────────────────
+                    vol.Optional(
+                        CONF_STT_MODEL,
+                        default=current_stt_model,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=stt_model_options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            custom_value=True,
+                        )
+                    ),
+                    # ── Text-to-speech model ──────────────────────────────
+                    vol.Optional(
+                        CONF_TTS_MODEL,
+                        default=current_tts_model,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=tts_model_options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            custom_value=True,
+                        )
+                    ),
                     # ── TTS voice (fallback default) ──────────────────────
                     # Primary voice selection is in Settings → Voice Assistants.
                     # This setting is used as fallback when no voice is chosen

@@ -54,10 +54,13 @@ from ._streaming import (
     iter_sse_audio_chunks,
     pop_complete_sentences,
 )
+from .audio_models import configured_model
 from .const import (
     CONF_TTS_MODE,
+    CONF_TTS_MODEL,
     CONF_TTS_VOICE,
     DEFAULT_TTS_MODE,
+    DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
     DOMAIN,
     MISTRAL_API_BASE,
@@ -65,7 +68,6 @@ from .const import (
     TTS_MAX_INFLIGHT_SENTENCES,
     TTS_MIN_SENTENCE_CHARS,
     TTS_MODE_BATCH,
-    TTS_MODEL,
     TTS_VOICES,
     TTS_WAV_HEADER_SIZE,
 )
@@ -216,12 +218,17 @@ class MistralTTSEntity(TextToSpeechEntity):
         return self.hass.data[DOMAIN][self._entry.entry_id]
 
     @property
+    def _model(self) -> str:
+        """Text-to-speech model from the options, else the default."""
+        return configured_model(self._entry.options, CONF_TTS_MODEL, DEFAULT_TTS_MODEL)
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_tts")},
             name="Mistral AI TTS",
             manufacturer="Mistral AI",
-            model=TTS_MODEL,
+            model=self._model,
             entry_type=DeviceEntryType.SERVICE,
             configuration_url="https://docs.mistral.ai/capabilities/audio_generation",
         )
@@ -299,8 +306,9 @@ class MistralTTSEntity(TextToSpeechEntity):
         """
         voice = options.get("voice") or self._entry.options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
 
+        model = self._model
         payload = {
-            "model": TTS_MODEL,
+            "model": model,
             "input": message,
             "voice_id": voice,
             "response_format": "mp3",
@@ -321,8 +329,9 @@ class MistralTTSEntity(TextToSpeechEntity):
                 if resp.status >= 400:
                     body = await resp.text()
                     _LOGGER.error(
-                        "Mistral TTS HTTP %s — voice=%s body=%s",
+                        "Mistral TTS HTTP %s — model=%s voice=%s body=%s",
                         resp.status,
+                        model,
                         voice,
                         body,
                     )
@@ -570,8 +579,9 @@ class MistralTTSEntity(TextToSpeechEntity):
         lines emitted by the worker; logic does not depend on it.
         """
         runtime = self._runtime
+        model = self._model
         payload = {
-            "model": TTS_MODEL,
+            "model": model,
             "input": text,
             "voice_id": voice,
             "response_format": "wav",
@@ -595,8 +605,9 @@ class MistralTTSEntity(TextToSpeechEntity):
                 if resp.status >= 400:
                     body = await resp.text()
                     _LOGGER.error(
-                        "Mistral TTS HTTP %s — voice=%s body=%s",
+                        "Mistral TTS HTTP %s — model=%s voice=%s body=%s",
                         resp.status,
+                        model,
                         voice,
                         body,
                     )

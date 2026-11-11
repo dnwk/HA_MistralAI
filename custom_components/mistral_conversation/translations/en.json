@@ -41,6 +41,8 @@
           "web_search": "Enable web search (Beta)",
           "web_search_mode": "Web search routing",
           "web_search_trigger": "Web search trigger phrases (optional)",
+          "stt_model": "Speech-to-text model",
+          "tts_model": "Text-to-speech model",
           "stt_language": "Speech recognition language (STT)",
           "tts_voice": "Text-to-speech voice",
           "tts_mode": "Text-to-speech mode"
@@ -55,6 +57,8 @@
           "web_search": "When enabled, the AI can search the web for up-to-date information. Uses Mistral's Agents API (beta). Requires a model that supports agents (mistral-small-latest, mistral-medium-latest or mistral-large-latest). See 'Web search routing' below — the 'Always search' option sends every request through the slower Agents API and disables device control for those turns.",
           "web_search_mode": "'Let the model decide' (recommended): the AI searches only when it decides it needs to, and can still control your devices in the same turn. 'Always search': every request goes through the Agents API — slower, and device control does not work on those turns.",
           "web_search_trigger": "Optional. Comma-separated phrases, for example 'search for, look up, google'. When set, these take precedence over the routing mode: only commands starting with one of these phrases search the web (the phrase itself is removed from the query), and all other commands never search. Leave empty to let the routing mode decide.",
+          "stt_model": "Voxtral model used to transcribe speech. The list shows the Voxtral speech models on your Mistral account; you can also type any model ID. Default: voxtral-mini-latest, which always points to Mistral's current transcription model. If speech recognition stops working after a change, check the log and switch back to the default.",
+          "tts_model": "Voxtral model used to generate speech. The list shows the text-to-speech models on your Mistral account; you can also type any model ID. Default: voxtral-mini-tts-latest, which always points to Mistral's current text-to-speech model. If speech output stops working after a change, check the log and switch back to the default.",
           "stt_language": "Language for Voxtral speech-to-text. Select 'Auto-detect' to let Voxtral determine the language automatically.",
           "tts_voice": "Default voice used by Mistral TTS, if none is configured in the assistant settings.",
           "tts_mode": "Stream: low-latency SSE WAV with sentence-level pipelining. Batch: single mp3 request, higher latency but smaller responses cache well. The tts.speak service always uses batch."
