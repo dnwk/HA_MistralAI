@@ -74,7 +74,7 @@ def _fake_sentence(behaviour: dict[str, tuple]):
     or ``("fail",)``.
     """
 
-    async def fake(text, voice, out_queue, idx=None):
+    async def fake(text, voice, out_queue, idx=None, style=None):
         kind = behaviour[text]
         if kind[0] == "fail":
             raise HomeAssistantError("boom")
@@ -148,7 +148,7 @@ class PipelinedStreamTests(unittest.IsolatedAsyncioTestCase):
         header_16k = _wav_header(sample_rate=16000)
         entity = _make_entity()
 
-        async def fake(text, voice, out_queue, idx=None):
+        async def fake(text, voice, out_queue, idx=None, style=None):
             await out_queue.put(("header", header_16k))
             await out_queue.put(PCM[TEXTS.index(text)])
 

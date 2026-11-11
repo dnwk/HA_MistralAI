@@ -18,6 +18,9 @@ CONF_STT_MODEL = "stt_model"
 CONF_TTS_MODEL = "tts_model"
 CONF_TTS_VOICE = "tts_voice"
 CONF_TTS_MODE = "tts_mode"
+CONF_TTS_PACE = "tts_pace"
+CONF_TTS_EMOTION = "tts_emotion"
+CONF_TTS_EXPRESSIVENESS = "tts_expressiveness"
 # Note: device control uses HA's native CONF_LLM_HASS_API from homeassistant.const
 
 # tts_mode values
@@ -175,6 +178,26 @@ TTS_VOICES = [
     "gb_oliver_neutral",
     "gb_oliver_sad",
 ]
+
+# --- Speech style ---------------------------------------------------------
+# Mistral TTS has no speed/pitch/volume fields. Delivery is steered with
+# inline tags at the start of the input text ("[emotion=calm][pace=slow]Hi"),
+# which are not spoken, and an `expressiveness` request field (1.0-5.0).
+# Values per Mistral's TTS guide (emotion-tags page), November 2026. Unknown
+# tag values are accepted by the API but have no effect, so only these are
+# offered. "default" in the options dropdowns means: send nothing.
+TTS_STYLE_DEFAULT = "default"
+TTS_PACES = ["very-slow", "slow", "moderate", "fast", "very-fast"]
+TTS_EMOTIONS = [
+    "amused", "angry", "anxious", "apologetic", "appreciative", "assertive",
+    "bored", "calm", "confident", "confused", "critical", "curious",
+    "determined", "disappointed", "disgusted", "excited", "frustrated",
+    "grateful", "happy", "hopeful", "playful", "proud", "reflective",
+    "resigned", "sad", "sarcastic", "skeptical", "somber", "surprised",
+    "tense", "tired", "urgent", "warm", "wistful",
+]
+TTS_EXPRESSIVENESS_MIN = 1.0
+TTS_EXPRESSIVENESS_MAX = 5.0
 
 # --- Streaming ----------------------------------------------------------
 # Cap on concurrently in-flight Mistral TTS requests (one per sentence).

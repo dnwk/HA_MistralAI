@@ -45,6 +45,9 @@
           "tts_model": "Tekst-naar-spraak model",
           "stt_language": "Spraakherkenning taal (STT)",
           "tts_voice": "Tekst-naar-spraak stem",
+          "tts_pace": "Spreektempo",
+          "tts_emotion": "Emotie",
+          "tts_expressiveness": "Expressiviteit",
           "tts_mode": "Tekst-naar-spraak modus"
         },
         "data_description": {
@@ -61,6 +64,9 @@
           "tts_model": "Voxtral-model dat tekst omzet in spraak. De lijst toont de tekst-naar-spraak modellen van je Mistral-account; je kunt ook zelf een model-ID invullen. Standaard: voxtral-mini-tts-latest, dat altijd naar het huidige tekst-naar-spraak model van Mistral wijst. Werkt spraakuitvoer niet meer na een wijziging, kijk dan in het logboek en kies weer het standaardmodel.",
           "stt_language": "Taal voor Voxtral spraakherkenning. Laat leeg voor automatische detectie.",
           "tts_voice": "Reservestem, gebruikt als er geen stem is gekozen onder Instellingen → Spraakassistenten en als tts.speak zonder stem wordt aangeroepen. Typ om te zoeken op naam, slug (bijvoorbeeld en_paul_neutral) of 'custom voice': de lijst bevat de vooraf ingestelde stemmen van Mistral en de eigen (gekloonde) stemmen van je account, die bovenaan staan. Je kunt ook een stem-ID invullen.",
+          "tts_pace": "Hoe snel de stem spreekt. Mistral heeft geen snelheidsinstelling; dit wordt als [pace=…]-tag vóór de tekst meegestuurd en niet uitgesproken. Geldt voor antwoorden van de spraakassistent en tts.speak (dat het kan overschrijven met de optie 'pace'). Vereist een model dat spraaktags begrijpt (Voxtral TTS 3); met een ouder model kan de tag hardop worden voorgelezen, dus test het. 'Standaard' stuurt niets mee.",
+          "tts_emotion": "Toon van de stem, meegestuurd als [emotion=…]-tag. Werkt met Voxtral 3-stemmen (zoals voice_478 en nieuwe eigen stemmen); oudere vooraf ingestelde stemmen zoals en_paul_angry hebben de emotie al in de stem. tts.speak kan het overschrijven met de optie 'emotion'. 'Standaard' stuurt niets mee.",
+          "tts_expressiveness": "Van 1,0 tot 5,0. Hogere waarden geven een sterkere voordracht, maar lijken minder op de gekozen stem en zijn minder stabiel. Laat leeg voor de standaardwaarde van Mistral. tts.speak kan het overschrijven met de optie 'expressiveness'.",
           "tts_mode": "Streaming: lage latentie via SSE WAV met pipelining per zin. Batch: één enkele mp3-aanvraag, hogere latentie maar kleinere antwoorden cachen goed. De tts.speak service gebruikt altijd batch."
         }
       }
@@ -87,6 +93,55 @@
         "mistral-small-latest": "Mistral Small — balans snelheid/kwaliteit (gratis tier)",
         "mistral-medium-latest": "Mistral Medium — nodig voor websearch; ⚠️ betaalde tier, vaak rate-limited op gratis API-keys",
         "mistral-large-latest": "Mistral Large — meest capabel; ⚠️ betaalde tier, vaak rate-limited op gratis API-keys"
+      }
+    },
+    "tts_pace": {
+      "options": {
+        "default": "Standaard (niet ingesteld)",
+        "very-slow": "Zeer langzaam",
+        "slow": "Langzaam",
+        "moderate": "Gemiddeld",
+        "fast": "Snel",
+        "very-fast": "Zeer snel"
+      }
+    },
+    "tts_emotion": {
+      "options": {
+        "default": "Standaard (niet ingesteld)",
+        "amused": "Geamuseerd",
+        "angry": "Boos",
+        "anxious": "Angstig",
+        "apologetic": "Verontschuldigend",
+        "appreciative": "Waarderend",
+        "assertive": "Assertief",
+        "bored": "Verveeld",
+        "calm": "Kalm",
+        "confident": "Zelfverzekerd",
+        "confused": "Verward",
+        "critical": "Kritisch",
+        "curious": "Nieuwsgierig",
+        "determined": "Vastberaden",
+        "disappointed": "Teleurgesteld",
+        "disgusted": "Walgend",
+        "excited": "Enthousiast",
+        "frustrated": "Gefrustreerd",
+        "grateful": "Dankbaar",
+        "happy": "Blij",
+        "hopeful": "Hoopvol",
+        "playful": "Speels",
+        "proud": "Trots",
+        "reflective": "Bedachtzaam",
+        "resigned": "Berustend",
+        "sad": "Verdrietig",
+        "sarcastic": "Sarcastisch",
+        "skeptical": "Sceptisch",
+        "somber": "Somber",
+        "surprised": "Verrast",
+        "tense": "Gespannen",
+        "tired": "Moe",
+        "urgent": "Dringend",
+        "warm": "Warm",
+        "wistful": "Weemoedig"
       }
     }
   }

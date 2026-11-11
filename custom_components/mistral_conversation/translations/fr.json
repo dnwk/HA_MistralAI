@@ -45,6 +45,9 @@
           "tts_model": "Modèle de synthèse vocale (TTS)",
           "stt_language": "Langage de la reconnaissance vocale (STT)",
           "tts_voice": "Voix de la transcription vocale (TTS)",
+          "tts_pace": "Débit de parole",
+          "tts_emotion": "Émotion",
+          "tts_expressiveness": "Expressivité",
           "tts_mode": "Mode de synthèse vocale (TTS)"
         },
         "data_description": {
@@ -61,6 +64,9 @@
           "tts_model": "Modèle Voxtral utilisé pour générer la parole. La liste affiche les modèles de synthèse vocale de votre compte Mistral ; vous pouvez aussi saisir n'importe quel identifiant de modèle. Par défaut : voxtral-mini-tts-latest, qui désigne toujours le modèle de synthèse vocale actuel de Mistral. Si la synthèse vocale ne fonctionne plus après un changement, consultez le journal et revenez au modèle par défaut.",
           "stt_language": "Langue utilisée pour la reconnaissance vocale (STT) de Voxtral. Selectionnez 'Auto-detect' Pour laisser Voxtral déterminer la langue de lui-même.",
           "tts_voice": "Voix de repli, utilisée quand aucune voix n'est choisie dans Paramètres → Assistants vocaux et quand tts.speak est appelé sans voix. Tapez pour rechercher par nom, par slug (par exemple en_paul_neutral) ou « custom voice » : la liste contient les voix prédéfinies de Mistral et les voix personnalisées (clonées) de votre compte, affichées en premier. Vous pouvez aussi saisir un identifiant de voix.",
+          "tts_pace": "Vitesse de la voix. Mistral n'a pas de réglage de vitesse : la valeur est envoyée sous forme de balise [pace=…] devant le texte, qui n'est pas prononcée. Utilisé pour les réponses de l'assistant vocal et tts.speak (qui peut la remplacer avec l'option « pace »). Nécessite un modèle qui comprend les balises (Voxtral TTS 3) ; avec un modèle plus ancien, la balise risque d'être lue à voix haute, donc testez-le. « Par défaut » n'envoie rien.",
+          "tts_emotion": "Ton de la voix, envoyé sous forme de balise [emotion=…]. Fonctionne avec les voix Voxtral 3 (comme voice_478 et les nouvelles voix personnalisées) ; les anciennes voix prédéfinies comme en_paul_angry intègrent déjà l'émotion. tts.speak peut la remplacer avec l'option « emotion ». « Par défaut » n'envoie rien.",
+          "tts_expressiveness": "De 1,0 à 5,0. Une valeur plus élevée donne une diction plus marquée, mais moins fidèle à la voix choisie et moins stable. Laissez vide pour utiliser la valeur par défaut de Mistral. tts.speak peut la remplacer avec l'option « expressiveness ».",
           "tts_mode": "Streaming : faible latence avec WAV en SSE et pipelining par phrase. Batch : une seule requête mp3, latence plus élevée mais réponses plus petites bien mises en cache. Le service tts.speak utilise toujours le mode batch."
         }
       }
@@ -87,6 +93,55 @@
         "mistral-small-latest": "Mistral Small — équilibre vitesse/qualité (niveau gratuit)",
         "mistral-medium-latest": "Mistral Medium — requis pour la recherche web ; ⚠️ niveau payant, souvent limité en débit avec une clé gratuite",
         "mistral-large-latest": "Mistral Large — le plus performant ; ⚠️ niveau payant, souvent limité en débit avec une clé gratuite"
+      }
+    },
+    "tts_pace": {
+      "options": {
+        "default": "Par défaut (non défini)",
+        "very-slow": "Très lent",
+        "slow": "Lent",
+        "moderate": "Modéré",
+        "fast": "Rapide",
+        "very-fast": "Très rapide"
+      }
+    },
+    "tts_emotion": {
+      "options": {
+        "default": "Par défaut (non défini)",
+        "amused": "Amusé",
+        "angry": "En colère",
+        "anxious": "Anxieux",
+        "apologetic": "Navré",
+        "appreciative": "Admiratif",
+        "assertive": "Affirmé",
+        "bored": "Ennuyé",
+        "calm": "Calme",
+        "confident": "Confiant",
+        "confused": "Confus",
+        "critical": "Critique",
+        "curious": "Curieux",
+        "determined": "Déterminé",
+        "disappointed": "Déçu",
+        "disgusted": "Dégoûté",
+        "excited": "Enthousiaste",
+        "frustrated": "Frustré",
+        "grateful": "Reconnaissant",
+        "happy": "Joyeux",
+        "hopeful": "Plein d'espoir",
+        "playful": "Espiègle",
+        "proud": "Fier",
+        "reflective": "Pensif",
+        "resigned": "Résigné",
+        "sad": "Triste",
+        "sarcastic": "Sarcastique",
+        "skeptical": "Sceptique",
+        "somber": "Grave",
+        "surprised": "Surpris",
+        "tense": "Tendu",
+        "tired": "Fatigué",
+        "urgent": "Pressant",
+        "warm": "Chaleureux",
+        "wistful": "Nostalgique"
       }
     }
   }

@@ -70,6 +70,12 @@ from .const import (
     TTS_MODE_BATCH,
     TTS_WAV_HEADER_SIZE,
 )
+from .speech_style import (
+    STYLE_OPTIONS,
+    SpeechStyle,
+    default_style_options,
+    speech_style,
+)
 from .voices import (
     VoiceItem,
     async_fetch_voice_items,
@@ -250,13 +256,18 @@ class MistralTTSEntity(TextToSpeechEntity):
 
     @property
     def supported_options(self) -> list[str]:
-        return ["voice"]
+        """Options tts.speak accepts: the voice plus pace/emotion/expressiveness."""
+        return ["voice", *STYLE_OPTIONS]
 
     @property
     def default_options(self) -> dict[str, Any]:
-        """Return the integration-configured default voice as fallback."""
+        """The integration's default voice and speech style.
+
+        Home Assistant merges these under the per-call options and includes
+        them in its TTS cache key, so changing a setting yields new audio.
+        """
         voice = self._entry.options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
-        return {"voice": voice}
+        return {"voice": voice, **default_style_options(self._entry.options)}
 
     def async_get_supported_voices(self, language: str) -> list[Voice]:
         """Return available Mistral TTS voices for the Voice Assistants dialog.
@@ -310,13 +321,15 @@ class MistralTTSEntity(TextToSpeechEntity):
         over the integration default (CONF_TTS_VOICE).
         """
         voice = options.get("voice") or self._entry.options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
+        style = speech_style(options, self._entry.options)
 
         model = self._model
         payload = {
             "model": model,
-            "input": message,
+            "input": style.apply(message),
             "voice_id": voice,
             "response_format": "mp3",
+            **style.payload_fields(),
         }
 
         runtime = self._runtime
@@ -378,10 +391,11 @@ class MistralTTSEntity(TextToSpeechEntity):
             return await super().async_stream_tts_audio(request)
 
         voice = request.options.get("voice") or self._entry.options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
+        style = speech_style(request.options, self._entry.options)
 
         return TTSAudioResponse(
             extension="wav",
-            data_gen=self._pipelined_stream(request.message_gen, voice),
+            data_gen=self._pipelined_stream(request.message_gen, voice, style),
         )
 
     # ------------------------------------------------------------------
@@ -391,6 +405,7 @@ class MistralTTSEntity(TextToSpeechEntity):
         self,
         message_gen: AsyncGenerator[str, None],
         voice: str,
+        style: SpeechStyle | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Aggressive sentence-pipelined TTS generator.
 
@@ -446,7 +461,9 @@ class MistralTTSEntity(TextToSpeechEntity):
                             idx,
                             len(text),
                         )
-                        await self._stream_one_sentence_into(text, voice, inner, idx=idx)
+                        await self._stream_one_sentence_into(
+                            text, voice, inner, idx=idx, style=style
+                        )
                         _LOGGER.debug("TTS sentence %d DONE", idx)
                 except asyncio.CancelledError:
                     raise
@@ -572,6 +589,7 @@ class MistralTTSEntity(TextToSpeechEntity):
         voice: str,
         out_queue: asyncio.Queue,
         idx: int | None = None,
+        style: SpeechStyle | None = None,
     ) -> None:
         """POST one sentence and pump SSE-decoded audio bytes into *out_queue*.
 
@@ -580,17 +598,22 @@ class MistralTTSEntity(TextToSpeechEntity):
         *out_queue* as one ``("header", bytes)`` item, followed by the plain
         PCM chunks. The consumer decides which sentence's header is used.
 
+        Every sentence is its own request, so the style tags are prefixed to
+        each one (a tag only lasts until the end of its request's input).
+
         *idx* is purely for log correlation with the surrounding START/DONE
         lines emitted by the worker; logic does not depend on it.
         """
         runtime = self._runtime
         model = self._model
+        style = style or SpeechStyle()
         payload = {
             "model": model,
-            "input": text,
+            "input": style.apply(text),
             "voice_id": voice,
             "response_format": "wav",
             "stream": True,
+            **style.payload_fields(),
         }
         header_buf = b""
         header_done = False

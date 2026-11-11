@@ -45,6 +45,9 @@
           "tts_model": "Text-to-speech model",
           "stt_language": "Speech recognition language (STT)",
           "tts_voice": "Text-to-speech voice",
+          "tts_pace": "Speaking pace",
+          "tts_emotion": "Emotion",
+          "tts_expressiveness": "Expressiveness",
           "tts_mode": "Text-to-speech mode"
         },
         "data_description": {
@@ -61,6 +64,9 @@
           "tts_model": "Voxtral model used to generate speech. The list shows the text-to-speech models on your Mistral account; you can also type any model ID. Default: voxtral-mini-tts-latest, which always points to Mistral's current text-to-speech model. If speech output stops working after a change, check the log and switch back to the default.",
           "stt_language": "Language for Voxtral speech-to-text. Select 'Auto-detect' to let Voxtral determine the language automatically.",
           "tts_voice": "Fallback voice, used when no voice is chosen under Settings → Voice Assistants and when tts.speak is called without a voice. Type to search by name, slug (for example en_paul_neutral) or 'custom voice': the list holds Mistral's preset voices and the custom (cloned) voices on your account, which are listed first. You can also type a voice ID.",
+          "tts_pace": "How fast the voice speaks. Mistral has no speed setting; this is sent as a [pace=…] tag in front of the text, which is not spoken. Used for Voice Assistant replies and tts.speak (which can override it with the option 'pace'). Needs a model that understands speech tags (Voxtral TTS 3); with an older model the tag may be read aloud, so test it. 'Default' sends nothing.",
+          "tts_emotion": "Tone of voice, sent as an [emotion=…] tag. Works with Voxtral 3 voices (such as voice_478 and new custom voices); older preset voices such as en_paul_angry have the emotion built into the voice. tts.speak can override it with the option 'emotion'. 'Default' sends nothing.",
+          "tts_expressiveness": "From 1.0 to 5.0. Higher values give a stronger delivery but sound less like the chosen voice and less stable. Leave empty to use Mistral's default. tts.speak can override it with the option 'expressiveness'.",
           "tts_mode": "Stream: low-latency SSE WAV with sentence-level pipelining. Batch: single mp3 request, higher latency but smaller responses cache well. The tts.speak service always uses batch."
         }
       }
@@ -87,6 +93,55 @@
         "mistral-small-latest": "Mistral Small — balanced speed & quality (free-tier friendly)",
         "mistral-medium-latest": "Mistral Medium — needed for web search; ⚠️ paid tier, often rate-limited on free API keys",
         "mistral-large-latest": "Mistral Large — most capable; ⚠️ paid tier, often rate-limited on free API keys"
+      }
+    },
+    "tts_pace": {
+      "options": {
+        "default": "Default (not set)",
+        "very-slow": "Very slow",
+        "slow": "Slow",
+        "moderate": "Moderate",
+        "fast": "Fast",
+        "very-fast": "Very fast"
+      }
+    },
+    "tts_emotion": {
+      "options": {
+        "default": "Default (not set)",
+        "amused": "Amused",
+        "angry": "Angry",
+        "anxious": "Anxious",
+        "apologetic": "Apologetic",
+        "appreciative": "Appreciative",
+        "assertive": "Assertive",
+        "bored": "Bored",
+        "calm": "Calm",
+        "confident": "Confident",
+        "confused": "Confused",
+        "critical": "Critical",
+        "curious": "Curious",
+        "determined": "Determined",
+        "disappointed": "Disappointed",
+        "disgusted": "Disgusted",
+        "excited": "Excited",
+        "frustrated": "Frustrated",
+        "grateful": "Grateful",
+        "happy": "Happy",
+        "hopeful": "Hopeful",
+        "playful": "Playful",
+        "proud": "Proud",
+        "reflective": "Reflective",
+        "resigned": "Resigned",
+        "sad": "Sad",
+        "sarcastic": "Sarcastic",
+        "skeptical": "Skeptical",
+        "somber": "Somber",
+        "surprised": "Surprised",
+        "tense": "Tense",
+        "tired": "Tired",
+        "urgent": "Urgent",
+        "warm": "Warm",
+        "wistful": "Wistful"
       }
     }
   }

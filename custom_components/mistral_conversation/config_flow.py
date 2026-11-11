@@ -21,8 +21,11 @@ from .const import (
     CONF_PROMPT,
     CONF_STT_MODEL,
     CONF_TEMPERATURE,
+    CONF_TTS_EMOTION,
+    CONF_TTS_EXPRESSIVENESS,
     CONF_TTS_MODE,
     CONF_TTS_MODEL,
+    CONF_TTS_PACE,
     CONF_TTS_VOICE,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_MODE,
@@ -41,7 +44,12 @@ from .const import (
     DEFAULT_WEB_SEARCH_TRIGGER,
     DOMAIN,
     MISTRAL_API_BASE,
+    TTS_EMOTIONS,
+    TTS_EXPRESSIVENESS_MAX,
+    TTS_EXPRESSIVENESS_MIN,
     TTS_MODES,
+    TTS_PACES,
+    TTS_STYLE_DEFAULT,
     WEB_SEARCH_MODES,
 )
 from .audio_models import (
@@ -194,6 +202,13 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                 )
             else:
                 user_input.pop(CONF_TTS_VOICE, None)
+            # Speech style: "default" / empty means "send nothing", so it is
+            # not stored at all.
+            for key in (CONF_TTS_PACE, CONF_TTS_EMOTION):
+                if user_input.get(key) in (None, "", TTS_STYLE_DEFAULT):
+                    user_input.pop(key, None)
+            if user_input.get(CONF_TTS_EXPRESSIVENESS) is None:
+                user_input.pop(CONF_TTS_EXPRESSIVENESS, None)
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.config_entry.options
@@ -371,6 +386,45 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                             options=voice_options,
                             mode=selector.SelectSelectorMode.DROPDOWN,
                             custom_value=True,
+                        )
+                    ),
+                    # ── Speech style (pace / emotion / expressiveness) ────
+                    # Mistral has no speed, pitch or volume fields: pace and
+                    # emotion are inline tags, expressiveness a request field.
+                    # "default" sends nothing. tts.speak can override each.
+                    vol.Optional(
+                        CONF_TTS_PACE,
+                        default=opts.get(CONF_TTS_PACE, TTS_STYLE_DEFAULT),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[TTS_STYLE_DEFAULT, *TTS_PACES],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="tts_pace",
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_TTS_EMOTION,
+                        default=opts.get(CONF_TTS_EMOTION, TTS_STYLE_DEFAULT),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[TTS_STYLE_DEFAULT, *TTS_EMOTIONS],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="tts_emotion",
+                        )
+                    ),
+                    # Empty = Mistral's own default (suggested_value, not a
+                    # default, so the field can be cleared again).
+                    vol.Optional(
+                        CONF_TTS_EXPRESSIVENESS,
+                        description={
+                            "suggested_value": opts.get(CONF_TTS_EXPRESSIVENESS),
+                        },
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=TTS_EXPRESSIVENESS_MIN,
+                            max=TTS_EXPRESSIVENESS_MAX,
+                            step=0.1,
+                            mode=selector.NumberSelectorMode.BOX,
                         )
                     ),
                     # ── TTS mode (stream vs batch) ────────────────────────
