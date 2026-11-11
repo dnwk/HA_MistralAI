@@ -23,6 +23,7 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_TTS_EMOTION,
     CONF_TTS_EXPRESSIVENESS,
+    CONF_TTS_GAIN_DB,
     CONF_TTS_MODE,
     CONF_TTS_MODEL,
     CONF_TTS_PACE,
@@ -47,6 +48,7 @@ from .const import (
     TTS_EMOTIONS,
     TTS_EXPRESSIVENESS_MAX,
     TTS_EXPRESSIVENESS_MIN,
+    TTS_GAIN_DB_MAX,
     TTS_MODES,
     TTS_PACES,
     TTS_STYLE_DEFAULT,
@@ -209,6 +211,8 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                     user_input.pop(key, None)
             if user_input.get(CONF_TTS_EXPRESSIVENESS) is None:
                 user_input.pop(CONF_TTS_EXPRESSIVENESS, None)
+            if not user_input.get(CONF_TTS_GAIN_DB):
+                user_input.pop(CONF_TTS_GAIN_DB, None)
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.config_entry.options
@@ -425,6 +429,21 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                             max=TTS_EXPRESSIVENESS_MAX,
                             step=0.1,
                             mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    # ── TTS volume boost ──────────────────────────────────
+                    # Mistral has no volume parameter, so the audio is scaled
+                    # here. 0 = unchanged (the default).
+                    vol.Optional(
+                        CONF_TTS_GAIN_DB,
+                        default=opts.get(CONF_TTS_GAIN_DB, 0),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=TTS_GAIN_DB_MAX,
+                            step=1,
+                            unit_of_measurement="dB",
+                            mode=selector.NumberSelectorMode.SLIDER,
                         )
                     ),
                     # ── TTS mode (stream vs batch) ────────────────────────

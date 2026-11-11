@@ -125,7 +125,8 @@ class TtsEntityStyleTests(_RealClientErrorAsync):
     def test_supported_and_default_options(self) -> None:
         entity, _ = self._entity(ENTRY_STYLE, _Resp())
         self.assertEqual(
-            entity.supported_options, ["voice", "pace", "emotion", "expressiveness"]
+            entity.supported_options,
+            ["voice", "pace", "emotion", "expressiveness", "volume_boost"],
         )
         defaults = entity.default_options
         self.assertEqual(defaults["pace"], "slow")

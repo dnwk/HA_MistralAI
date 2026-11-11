@@ -48,6 +48,7 @@
           "tts_pace": "Speaking pace",
           "tts_emotion": "Emotion",
           "tts_expressiveness": "Expressiveness",
+          "tts_gain_db": "Volume boost",
           "tts_mode": "Text-to-speech mode"
         },
         "data_description": {
@@ -67,6 +68,7 @@
           "tts_pace": "How fast the voice speaks. Mistral has no speed setting; this is sent as a [pace=…] tag in front of the text, which is not spoken. Used for Voice Assistant replies and tts.speak (which can override it with the option 'pace'). Needs a model that understands speech tags (Voxtral TTS 3); with an older model the tag may be read aloud, so test it. 'Default' sends nothing.",
           "tts_emotion": "Tone of voice, sent as an [emotion=…] tag. Works with Voxtral 3 voices (such as voice_478 and new custom voices); older preset voices such as en_paul_angry have the emotion built into the voice. tts.speak can override it with the option 'emotion'. 'Default' sends nothing.",
           "tts_expressiveness": "From 1.0 to 5.0. Higher values give a stronger delivery but sound less like the chosen voice and less stable. Leave empty to use Mistral's default. tts.speak can override it with the option 'expressiveness'.",
+          "tts_gain_db": "Makes the spoken replies louder, in dB. Mistral has no volume setting, so Home Assistant raises the volume of the audio itself; loud parts are rounded off instead of clipping. 0 leaves the audio unchanged. +3 to +6 dB is usually enough; higher values make loud parts sound squashed. tts.speak can override it with the option 'volume_boost'.",
           "tts_mode": "Stream: low-latency SSE WAV with sentence-level pipelining. Batch: single mp3 request, higher latency but smaller responses cache well. The tts.speak service always uses batch."
         }
       }

@@ -60,7 +60,7 @@ This integration makes **Mistral AI** available as a fully-featured conversation
 | Text-to-speech (TTS) | ✅ | Mistral TTS (`voxtral-mini-tts-latest` by default, configurable) via `/v1/audio/speech` |
 | Configurable speech models | ✅ | Pick the STT and TTS models from those on your Mistral account, or type any model ID |
 | Streaming TTS | ✅ | Low-latency SSE WAV with sentence-level pipelining (≥ v0.4.0) |
-| Speech style | ✅ | Speaking pace, emotion and expressiveness, as defaults or per `tts.speak` call |
+| Speech style | ✅ | Speaking pace, emotion, expressiveness and volume boost, as defaults or per `tts.speak` call |
 | Live TTS voice list | ✅ | Voices fetched from your Mistral account — presets *and* custom (cloned) voices, in a searchable picker |
 | AI Task | ✅ | `ai_task.generate_data` with structured output and image attachments |
 | Conversation memory | ✅ | Context kept per session until 5 min idle (HA timeout). |
@@ -157,6 +157,7 @@ Click the integration → **Configure** to change settings.
 | **Speaking pace** | Default (not set) | Very slow … Very fast — see [Speech style](#speech-style-pace-emotion-expressiveness) |
 | **Emotion** | Default (not set) | Tone of voice, one of 34 emotions (Voxtral 3 voices) — see [Speech style](#speech-style-pace-emotion-expressiveness) |
 | **Expressiveness** | *(empty — Mistral's default)* | 1.0–5.0; higher = stronger delivery, less like the chosen voice |
+| **Volume boost** | `0 dB` (unchanged) | 0 to +12 dB, applied to the audio in Home Assistant — see [Volume boost](#volume-boost) |
 | **TTS mode** | `Streaming` | `Streaming` (SSE WAV with sentence-level pipelining) or `Batch` (single MP3 request) |
 
 ### Available models
@@ -420,7 +421,19 @@ data:
 
 Use `default` (or an empty value) in `options` to turn a setting off for one call. Unknown values are ignored with a warning in the log.
 
-> **Model and voice support.** Mistral documents these tags with its Voxtral TTS 3 model (`voxtral-mini-tts-3-0`). Older presets such as `en_paul_angry` carry their emotion in the voice itself, so an emotion tag has little effect on them. Mistral doesn't say which version `voxtral-mini-tts-latest` points to; if you hear "pace equals slow" read out loud, your model doesn't support tags — pick a Voxtral TTS 3 model under **Text-to-speech model** or switch the setting back to *Default*. For volume, use the volume of the media player.
+> **Model and voice support.** Mistral documents these tags with its Voxtral TTS 3 model (`voxtral-mini-tts-3-0`). Older presets such as `en_paul_angry` carry their emotion in the voice itself, so an emotion tag has little effect on them. Mistral doesn't say which version `voxtral-mini-tts-latest` points to; if you hear "pace equals slow" read out loud, your model doesn't support tags — pick a Voxtral TTS 3 model under **Text-to-speech model** or switch the setting back to *Default*. For volume, see [Volume boost](#volume-boost) below.
+
+### Volume boost
+
+Mistral's voices can be quiet next to other TTS engines, and its API has no volume setting. **Volume boost** (0 to +12 dB, under **Configure**) makes the integration raise the volume of the audio itself before Home Assistant plays it:
+
+- **0 dB** (the default) leaves the audio exactly as Mistral sends it.
+- **+3 to +6 dB** is usually enough and stays clean.
+- **Higher values** sound louder but squashed: loud parts are rounded off instead of clipping, and at +12 dB everything above about half of full volume ends up at the maximum.
+
+It applies to Voice Assistant replies and to `tts.speak`, which can override it per call with `options: {volume_boost: 6}` (`0` turns it off for that call). With a boost set, `tts.speak` receives WAV instead of MP3, because the boost needs the raw audio. Only 16-bit PCM audio — what Mistral sends — is boosted; anything else plays unchanged with one warning in the log.
+
+Volume boost is ported from the upstream project ([SnarfNL/HA_MistralAI](https://github.com/SnarfNL/HA_MistralAI), where it was still a draft); this fork adds the per-call override and makes Home Assistant's TTS cache aware of the setting.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -471,7 +484,7 @@ Decisions behind recent changes, and why they were made.
 - **Voices are saved by voice ID.** The voice pickers store Mistral's voice ID, as earlier versions did, so existing settings and Voice Assistants selections keep working. Mistral also accepts a preset's slug (such as `en_paul_neutral`) as the voice, so slugs work in `tts.speak`; in the Configure field a typed slug or custom voice name is converted to that voice's ID.
 - **Voice list from v2, with a narrow v1 fallback.** Mistral deprecated offset pagination on `GET /v1/audio/voices`, so the list comes from `GET /v2/audio/voices`. v1 is only tried when v2 answers HTTP 400, 404, 405 or 422 (endpoint or request not accepted). For an invalid key, a rate limit or a server error a second request would fail the same way, so none is made.
 - **Admin-only Home Assistant APIs are left out for non-admin requests.** Home Assistant marks some LLM APIs as admin-only (such as *Home Assistant*) and, when several are selected, refuses the whole set — and so the whole turn — if the request has no admin user. With *Device control* and *Home Assistant* both selected, every voice command failed with "Error getting LLM API …: Unauthorized". The integration now drops the admin-only APIs for requests without an admin user and keeps the rest, so voice control keeps working while admins chatting in the app still get everything selected. If only admin-only APIs are selected, such requests run without tools.
-- **Speech style uses Mistral's tags, not audio processing.** Mistral's speech API has no speed, pitch or volume fields, so pace and emotion are sent as inline tags (`[emotion=calm][pace=slow]`) and expressiveness as a request field. Changing volume or pitch would mean processing the audio inside Home Assistant, which the integration does not do; the media player's volume covers volume. Only the values Mistral documents are sent: an unknown tag is accepted by the API but does nothing, so typos are logged and dropped instead. Each streamed sentence is its own request, so the tags are added to every sentence. The style is also returned in the TTS entity's default options so Home Assistant's TTS cache does not replay audio made with an old setting.
+- **Speech style uses Mistral's tags; only volume is processed locally.** Mistral's speech API has no speed, pitch or volume fields, so pace and emotion are sent as inline tags (`[emotion=calm][pace=slow]`) and expressiveness as a request field. Volume is the one exception: the *Volume boost* scales the 16-bit PCM inside Home Assistant (standard library only, no `audioop` or numpy), because a too-quiet voice can't be fixed from the media player without making everything else too loud. It uses a static soft clipper rather than a leveller, which is simple and never hard-clips but squashes loud parts at high settings. The 65,536-entry lookup table is built in an executor, not on the event loop. Pitch is not changed: that would need real signal processing. Only the values Mistral documents are sent: an unknown tag is accepted by the API but does nothing, so typos are logged and dropped instead. Each streamed sentence is its own request, so the tags are added to every sentence. The style — including the volume boost — is also returned in the TTS entity's default options so Home Assistant's TTS cache does not replay audio made with an old setting.
 - **Web search results are treated as untrusted.** On the round where the model reads search results, every tool is withdrawn, not just web search, so instructions hidden in a web page cannot trigger a device action. Device control still works on the round where the model decides to search.
 - **No household data in the web-search agent.** The web-search agent is stored in your Mistral account, so it gets fixed, generic instructions and never your rendered system prompt (which can contain your exposed entities and areas). An existing agent with the same name and model is reused instead of creating a new one on every restart.
 - **Upstream fixes are ported selectively.** This fork is based on [SnarfNL/HA_MistralAI](https://github.com/SnarfNL/HA_MistralAI). Fixes taken from it are marked *ported from upstream* in the release notes. Upstream's removal of the *Text-to-speech voice* option was not taken: this fork keeps that option as the searchable fallback voice.
@@ -483,6 +496,7 @@ Decisions behind recent changes, and why they were made.
 ## Release Notes
 
 ### Unreleased
+- **Added:** *Volume boost* option for text-to-speech (0 to +12 dB, default 0 = unchanged). Mistral has no volume setting, so the integration scales the 16-bit PCM itself with a soft limiter, both for streamed Voice Assistant replies and for `tts.speak` (which then returns WAV instead of MP3). `tts.speak` can override it with the `volume_boost` option, and the setting is part of Home Assistant's TTS cache key, so changing it doesn't replay cached audio at the old volume. +3 to +6 dB stays clean; higher values squash loud parts. *Ported from upstream (draft at the time); the per-call option and cache handling are additions.*
 - **Added:** *Speaking pace*, *Emotion* and *Expressiveness* options for text-to-speech. Pace (very slow … very fast) and emotion (34 values such as calm, warm, happy) are sent as Mistral's inline `[pace=…]` / `[emotion=…]` tags, expressiveness (1.0–5.0) as a request field. All are off by default, apply to Voice Assistant replies and `tts.speak`, and can be overridden per call with the `pace`, `emotion` and `expressiveness` options. Mistral offers no speed, pitch or volume setting. Mistral documents the tags for Voxtral TTS 3; with an older TTS model a tag may be read aloud.
 - **Fixed:** with the admin-only *Home Assistant* API selected under *Control Home Assistant* (alongside *Device control*), every request without an admin user — voice satellites, automations, non-admin users — failed with "Error getting LLM API ['assist', 'homeassistant'] for mistral_conversation: Unauthorized". Admin-only APIs are now left out for those requests and the other selected APIs are used; admin users still get every selected API. The option's help text explains this.
 - **Fixed:** the *Speech-to-text model* dropdown offered `voxtral-small-latest` and `voxtral-small-2507`, which are chat-with-audio models; picking one made every transcription fail with HTTP 400 "Invalid model". The list now only holds transcription models (IDs containing `transcribe`, and the `voxtral-mini` family). A model saved earlier is still shown and can be changed.

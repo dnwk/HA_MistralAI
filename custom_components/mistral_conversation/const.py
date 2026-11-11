@@ -21,6 +21,7 @@ CONF_TTS_MODE = "tts_mode"
 CONF_TTS_PACE = "tts_pace"
 CONF_TTS_EMOTION = "tts_emotion"
 CONF_TTS_EXPRESSIVENESS = "tts_expressiveness"
+CONF_TTS_GAIN_DB = "tts_gain_db"
 # Note: device control uses HA's native CONF_LLM_HASS_API from homeassistant.const
 
 # tts_mode values
@@ -198,6 +199,10 @@ TTS_EMOTIONS = [
 ]
 TTS_EXPRESSIVENESS_MIN = 1.0
 TTS_EXPRESSIVENESS_MAX = 5.0
+
+# Volume boost in dB, applied to the audio inside Home Assistant because
+# Mistral has no volume parameter. 0 = unchanged (the default).
+TTS_GAIN_DB_MAX = 12
 
 # --- Streaming ----------------------------------------------------------
 # Cap on concurrently in-flight Mistral TTS requests (one per sentence).

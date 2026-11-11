@@ -48,6 +48,7 @@
           "tts_pace": "Débit de parole",
           "tts_emotion": "Émotion",
           "tts_expressiveness": "Expressivité",
+          "tts_gain_db": "Amplification du volume",
           "tts_mode": "Mode de synthèse vocale (TTS)"
         },
         "data_description": {
@@ -67,6 +68,7 @@
           "tts_pace": "Vitesse de la voix. Mistral n'a pas de réglage de vitesse : la valeur est envoyée sous forme de balise [pace=…] devant le texte, qui n'est pas prononcée. Utilisé pour les réponses de l'assistant vocal et tts.speak (qui peut la remplacer avec l'option « pace »). Nécessite un modèle qui comprend les balises (Voxtral TTS 3) ; avec un modèle plus ancien, la balise risque d'être lue à voix haute, donc testez-le. « Par défaut » n'envoie rien.",
           "tts_emotion": "Ton de la voix, envoyé sous forme de balise [emotion=…]. Fonctionne avec les voix Voxtral 3 (comme voice_478 et les nouvelles voix personnalisées) ; les anciennes voix prédéfinies comme en_paul_angry intègrent déjà l'émotion. tts.speak peut la remplacer avec l'option « emotion ». « Par défaut » n'envoie rien.",
           "tts_expressiveness": "De 1,0 à 5,0. Une valeur plus élevée donne une diction plus marquée, mais moins fidèle à la voix choisie et moins stable. Laissez vide pour utiliser la valeur par défaut de Mistral. tts.speak peut la remplacer avec l'option « expressiveness ».",
+          "tts_gain_db": "Rend les réponses vocales plus fortes, en dB. Mistral n'a pas de réglage de volume : Home Assistant augmente lui-même le volume de l'audio, et les passages forts sont arrondis au lieu de saturer. 0 laisse l'audio inchangé. +3 à +6 dB suffit généralement ; au-delà, les passages forts paraissent écrasés. tts.speak peut le remplacer avec l'option « volume_boost ».",
           "tts_mode": "Streaming : faible latence avec WAV en SSE et pipelining par phrase. Batch : une seule requête mp3, latence plus élevée mais réponses plus petites bien mises en cache. Le service tts.speak utilise toujours le mode batch."
         }
       }

@@ -48,6 +48,7 @@
           "tts_pace": "Spreektempo",
           "tts_emotion": "Emotie",
           "tts_expressiveness": "Expressiviteit",
+          "tts_gain_db": "Volumeversterking",
           "tts_mode": "Tekst-naar-spraak modus"
         },
         "data_description": {
@@ -67,6 +68,7 @@
           "tts_pace": "Hoe snel de stem spreekt. Mistral heeft geen snelheidsinstelling; dit wordt als [pace=…]-tag vóór de tekst meegestuurd en niet uitgesproken. Geldt voor antwoorden van de spraakassistent en tts.speak (dat het kan overschrijven met de optie 'pace'). Vereist een model dat spraaktags begrijpt (Voxtral TTS 3); met een ouder model kan de tag hardop worden voorgelezen, dus test het. 'Standaard' stuurt niets mee.",
           "tts_emotion": "Toon van de stem, meegestuurd als [emotion=…]-tag. Werkt met Voxtral 3-stemmen (zoals voice_478 en nieuwe eigen stemmen); oudere vooraf ingestelde stemmen zoals en_paul_angry hebben de emotie al in de stem. tts.speak kan het overschrijven met de optie 'emotion'. 'Standaard' stuurt niets mee.",
           "tts_expressiveness": "Van 1,0 tot 5,0. Hogere waarden geven een sterkere voordracht, maar lijken minder op de gekozen stem en zijn minder stabiel. Laat leeg voor de standaardwaarde van Mistral. tts.speak kan het overschrijven met de optie 'expressiveness'.",
+          "tts_gain_db": "Maakt de gesproken antwoorden luider, in dB. Mistral heeft geen volume-instelling, dus Home Assistant verhoogt zelf het volume van de audio; luide delen worden afgerond in plaats van te vervormen. 0 laat de audio ongewijzigd. +3 tot +6 dB is meestal genoeg; hogere waarden laten luide delen platgedrukt klinken. tts.speak kan het overschrijven met de optie 'volume_boost'.",
           "tts_mode": "Streaming: lage latentie via SSE WAV met pipelining per zin. Batch: één enkele mp3-aanvraag, hogere latentie maar kleinere antwoorden cachen goed. De tts.speak service gebruikt altijd batch."
         }
       }

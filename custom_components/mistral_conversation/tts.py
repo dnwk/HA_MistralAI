@@ -30,9 +30,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import logging
 import struct
 import time
+import wave
 from typing import Any, AsyncGenerator
 
 import aiohttp
@@ -50,9 +52,13 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ._streaming import (
+    PcmGain,
+    apply_gain,
     has_speakable_content,
     iter_sse_audio_chunks,
     pop_complete_sentences,
+    prepare_gain,
+    wav_is_pcm16,
 )
 from .audio_models import configured_model
 from .const import (
@@ -114,6 +120,33 @@ def _silence_for_header(header: bytes) -> bytes:
 # Static preset ids encode their language as a prefix ("en_paul_neutral",
 # "gb_jane_neutral"). Maps an HA language code to the static-id prefixes that
 # speak it, used only for ordering the static fallback list.
+def _boost_wav(wav_bytes: bytes, gain_db: float) -> bytes | None:
+    """Return *wav_bytes* with its volume raised, or None if it is not 16-bit PCM.
+
+    Blocking (decode, scale, re-wrap): run it in the executor. Ported from
+    upstream SnarfNL/HA_MistralAI (commit 651caad).
+    """
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as reader:
+            channels, width, rate = (
+                reader.getnchannels(),
+                reader.getsampwidth(),
+                reader.getframerate(),
+            )
+            frames = reader.readframes(reader.getnframes())
+    except (wave.Error, EOFError):
+        return None
+    if width != 2:
+        return None
+    out = io.BytesIO()
+    with wave.open(out, "wb") as writer:
+        writer.setnchannels(channels)
+        writer.setsampwidth(width)
+        writer.setframerate(rate)
+        writer.writeframes(apply_gain(frames, gain_db))
+    return out.getvalue()
+
+
 _STATIC_LANG_PREFIXES: dict[str, tuple[str, ...]] = {
     "en": ("en_", "gb_"),
     "fr": ("fr_",),
@@ -209,6 +242,15 @@ class MistralTTSEntity(TextToSpeechEntity):
         # startup failure doesn't pin the picker to the static list forever.
         self._voice_cache: list[VoiceItem] | None = None
         self._voice_refresh_task: asyncio.Task | None = None
+        # The "volume boost not applied" warning is logged once per entity.
+        self._gain_skip_logged = False
+
+    def _log_gain_skipped(self) -> None:
+        if not self._gain_skip_logged:
+            self._gain_skip_logged = True
+            _LOGGER.warning(
+                "Mistral TTS audio is not 16-bit PCM WAV; the volume boost is not applied"
+            )
 
     async def async_added_to_hass(self) -> None:
         """Fetch the account's voice list once the entity is registered.
@@ -324,11 +366,14 @@ class MistralTTSEntity(TextToSpeechEntity):
         style = speech_style(options, self._entry.options)
 
         model = self._model
+        # A volume boost scales raw PCM, so ask for wav; without one nothing
+        # changes (mp3).
+        boost = style.gain_db > 0
         payload = {
             "model": model,
             "input": style.apply(message),
             "voice_id": voice,
-            "response_format": "mp3",
+            "response_format": "wav" if boost else "mp3",
             **style.payload_fields(),
         }
 
@@ -354,7 +399,7 @@ class MistralTTSEntity(TextToSpeechEntity):
                         body,
                     )
                     raise HomeAssistantError(f"Mistral TTS error {resp.status}: {body}")
-                # Mistral returns JSON with base64-encoded MP3 in audio_data
+                # Mistral returns JSON with base64-encoded audio in audio_data
                 data = await resp.json()
                 audio_b64 = data.get("audio_data", "")
                 if not audio_b64:
@@ -370,7 +415,15 @@ class MistralTTSEntity(TextToSpeechEntity):
             len(audio_bytes),
             voice,
         )
-        return "mp3", audio_bytes
+        if not boost:
+            return "mp3", audio_bytes
+        boosted = await self.hass.async_add_executor_job(
+            _boost_wav, audio_bytes, style.gain_db
+        )
+        if boosted is None:
+            self._log_gain_skipped()
+            return "wav", audio_bytes
+        return "wav", boosted
 
     # ------------------------------------------------------------------
     # Streaming path
@@ -392,6 +445,10 @@ class MistralTTSEntity(TextToSpeechEntity):
 
         voice = request.options.get("voice") or self._entry.options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
         style = speech_style(request.options, self._entry.options)
+        if style.gain_db > 0:
+            # Build the 65,536-entry gain table off the event loop (cached
+            # per gain value), so the first sentence does not pay for it.
+            await self.hass.async_add_executor_job(prepare_gain, style.gain_db)
 
         return TTSAudioResponse(
             extension="wav",
@@ -617,6 +674,8 @@ class MistralTTSEntity(TextToSpeechEntity):
         }
         header_buf = b""
         header_done = False
+        # Volume boost: set once the header shows 16-bit PCM; None = untouched.
+        gain: PcmGain | None = None
         request_start = time.monotonic()
         first_chunk_logged = False
         try:
@@ -658,10 +717,23 @@ class MistralTTSEntity(TextToSpeechEntity):
                         if len(header_buf) < TTS_WAV_HEADER_SIZE:
                             continue
                         header_done = True
-                        await out_queue.put(("header", header_buf[:TTS_WAV_HEADER_SIZE]))
+                        header = header_buf[:TTS_WAV_HEADER_SIZE]
+                        await out_queue.put(("header", header))
+                        if style.gain_db > 0:
+                            if wav_is_pcm16(header):
+                                gain = PcmGain(style.gain_db)
+                            else:
+                                self._log_gain_skipped()
                         audio = header_buf[TTS_WAV_HEADER_SIZE:]
                         if not audio:
                             continue
+                    if gain is not None:
+                        audio = gain.process(audio)
+                        if not audio:
+                            continue
                     await out_queue.put(audio)
+                # An odd trailing byte (malformed audio) is passed on unscaled.
+                if gain is not None and (tail := gain.flush()):
+                    await out_queue.put(tail)
         except aiohttp.ClientError as err:
             raise HomeAssistantError(f"Cannot reach Mistral AI: {err}") from err
