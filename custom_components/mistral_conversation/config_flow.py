@@ -210,6 +210,7 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                         selector.SelectSelectorConfig(
                             options=CHAT_MODELS,
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="model",
                         )
                     ),
                     # ── System prompt ─────────────────────────────────────
