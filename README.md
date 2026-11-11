@@ -90,9 +90,11 @@ This integration makes **Mistral AI** available as a fully-featured conversation
 ### Via HACS (recommended)
 
 1. HACS → **Integrations** → ⋮ → **Custom repositories**
-2. URL: `https://github.com/SnarfNL/HA_MistralAI` — category: **Integration**
+2. URL: `https://github.com/dnwk/HA_MistralAI` — category: **Integration**
 3. Search "Mistral AI Conversation" → **Download**
 4. **Fully restart** Home Assistant
+
+> This installs this fork, which is based on [SnarfNL/HA_MistralAI](https://github.com/SnarfNL/HA_MistralAI) — see [Design notes](#design-notes) for how they differ. Both install the same `mistral_conversation` integration, so if you added the upstream repository to HACS before, remove it there first to avoid the two overwriting each other.
 
 ### Manual
 
