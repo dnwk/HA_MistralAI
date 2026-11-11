@@ -196,8 +196,8 @@ class MistralTTSEntity(TextToSpeechEntity):
         self.hass = hass
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_tts"
-        # Populated in async_added_to_hass from GET /v1/audio/voices (all
-        # pages — presets + custom). None means "not fetched yet or fetch
+        # Populated in async_added_to_hass from GET /v2/audio/voices (all
+        # pages — presets + custom; see voices.py). None means "not fetched yet or fetch
         # failed" → async_get_supported_voices() falls back to the static
         # TTS_VOICES list AND schedules a background re-fetch so a transient
         # startup failure doesn't pin the picker to the static list forever.
@@ -208,7 +208,7 @@ class MistralTTSEntity(TextToSpeechEntity):
         """Fetch the account's voice list once the entity is registered.
 
         async_get_supported_voices() is a synchronous HA callback and cannot
-        await, so the network round-trip to GET /v1/audio/voices has to
+        await, so the network round-trip to the voices endpoint has to
         happen here and be cached. Failures degrade gracefully to the static
         list, and are retried lazily — see async_get_supported_voices.
         """

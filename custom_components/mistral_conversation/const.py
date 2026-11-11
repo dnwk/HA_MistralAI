@@ -203,6 +203,8 @@ TTS_INTER_SENTENCE_SILENCE_BYTES = 14_400
 # API
 # ---------------------------------------------------------------------------
 MISTRAL_API_BASE = "https://api.mistral.ai/v1"
+# Only used for endpoints that moved to v2 (GET /v2/audio/voices).
+MISTRAL_API_V2_BASE = "https://api.mistral.ai/v2"
 
 # Max tool-call round-trips to prevent infinite loops
 MAX_TOOL_ITERATIONS = 10

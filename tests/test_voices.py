@@ -20,33 +20,59 @@ from mistral_conversation import voices
 from mistral_conversation.const import CONF_TTS_VOICE, DEFAULT_TTS_VOICE, TTS_VOICES
 from mistral_conversation.voices import VoiceItem
 
-from .test_audio_models import _options_flow, _Resp, _Session
+from .test_audio_models import (
+    _ClientError,
+    _Ctx,
+    _options_flow,
+    _RealClientErrorAsync,
+    _Resp,
+)
 
 PAUL = VoiceItem("uuid-paul", "en_paul_neutral", ("en_us",), slug="en_paul_neutral")
 SHEILA = VoiceItem("uuid-sheila", "Sheila", ("en_us",), slug="voice_478", gender="female")
 CLONE = VoiceItem("uuid-clone", "My Voice", custom=True)
 ITEMS = [PAUL, SHEILA, CLONE]
 
+V2_URL = "https://api.mistral.ai/v2/audio/voices"
+V1_URL = "https://api.mistral.ai/v1/audio/voices"
 
-class FetchVoiceItemsTests(unittest.IsolatedAsyncioTestCase):
+
+class _SeqSession:
+    """Answers each GET with the next response (or raises the next exception)."""
+
+    def __init__(self, *responses) -> None:
+        self._responses = list(responses)
+        self.calls: list[tuple[str, dict]] = []
+
+    def get(self, url: str, **kwargs) -> _Ctx:
+        self.calls.append((url, dict(kwargs["params"])))
+        nxt = self._responses.pop(0)
+        if isinstance(nxt, Exception):
+            raise nxt
+        return _Ctx(nxt)
+
+
+def _v2_page(items: list[dict], token: str | None) -> _Resp:
+    return _Resp(json_data={"data": items, "next_page_token": token})
+
+
+class FetchVoiceItemsTests(_RealClientErrorAsync):
     async def test_parses_type_slug_and_gender(self) -> None:
-        session = _Session(
-            _Resp(
-                json_data={
-                    "items": [
-                        {
-                            "id": "uuid-sheila",
-                            "name": "Sheila",
-                            "type": "preset",
-                            "slug": "voice_478",
-                            "gender": "female",
-                            "languages": ["en_us"],
-                        },
-                        {"id": "uuid-clone", "name": "My Voice", "type": "custom", "slug": None},
-                        {"id": "uuid-old", "name": "en_paul_neutral"},
-                    ],
-                    "total": 3,
-                }
+        session = _SeqSession(
+            _v2_page(
+                [
+                    {
+                        "id": "uuid-sheila",
+                        "name": "Sheila",
+                        "type": "preset",
+                        "slug": "voice_478",
+                        "gender": "female",
+                        "languages": ["en_us"],
+                    },
+                    {"id": "uuid-clone", "name": "My Voice", "type": "custom", "slug": None},
+                    {"id": "uuid-old", "name": "en_paul_neutral"},
+                ],
+                None,
             )
         )
         items = await voices.async_fetch_voice_items(session, {})
@@ -58,7 +84,77 @@ class FetchVoiceItemsTests(unittest.IsolatedAsyncioTestCase):
                 VoiceItem("uuid-old", "en_paul_neutral"),
             ],
         )
-        self.assertEqual(session.calls[0][1]["params"]["type"], "all")
+        self.assertEqual(session.calls, [(V2_URL, {"type": "all", "page_size": 100})])
+
+    async def test_v2_follows_page_tokens(self) -> None:
+        session = _SeqSession(
+            _v2_page([{"id": "a", "name": "A"}], "tok-1"),
+            _v2_page([{"id": "b", "name": "B"}], "tok-2"),
+            _v2_page([{"id": "c", "name": "C"}, {"id": "a", "name": "A"}], None),
+        )
+        items = await voices.async_fetch_voice_items(session, {})
+        self.assertEqual([i.voice_id for i in items], ["a", "b", "c"])
+        self.assertEqual(
+            [params.get("page_token") for _, params in session.calls],
+            [None, "tok-1", "tok-2"],
+        )
+
+    async def test_v2_stops_on_repeated_token(self) -> None:
+        session = _SeqSession(
+            _v2_page([{"id": "a", "name": "A"}], "same"),
+            _v2_page([{"id": "b", "name": "B"}], "same"),
+        )
+        items = await voices.async_fetch_voice_items(session, {})
+        self.assertEqual([i.voice_id for i in items], ["a", "b"])
+        self.assertEqual(len(session.calls), 2)
+
+    async def test_v2_stops_on_empty_page(self) -> None:
+        session = _SeqSession(
+            _v2_page([{"id": "a", "name": "A"}], "tok-1"),
+            _v2_page([], "tok-2"),
+        )
+        items = await voices.async_fetch_voice_items(session, {})
+        self.assertEqual([i.voice_id for i in items], ["a"])
+        self.assertEqual(len(session.calls), 2)
+
+    async def test_falls_back_to_v1_when_v2_unavailable(self) -> None:
+        for status in (400, 404, 405, 422):
+            with self.subTest(status=status):
+                session = _SeqSession(
+                    _Resp(status=status, text="nope"),
+                    _Resp(json_data={"items": [{"id": "a", "name": "A"}], "total": 2}),
+                    _Resp(json_data={"items": [{"id": "b", "name": "B"}], "total": 2}),
+                )
+                items = await voices.async_fetch_voice_items(session, {})
+                self.assertEqual([i.voice_id for i in items], ["a", "b"])
+                self.assertEqual(
+                    session.calls[1:],
+                    [
+                        (V1_URL, {"type": "all", "limit": 100, "offset": 0}),
+                        (V1_URL, {"type": "all", "limit": 100, "offset": 1}),
+                    ],
+                )
+
+    async def test_account_or_server_errors_do_not_fall_back(self) -> None:
+        for status in (401, 403, 429, 500):
+            with self.subTest(status=status):
+                session = _SeqSession(_Resp(status=status, text="err"))
+                self.assertIsNone(await voices.async_fetch_voice_items(session, {}))
+                self.assertEqual(len(session.calls), 1)
+
+    async def test_v1_fallback_error_returns_none(self) -> None:
+        session = _SeqSession(_Resp(status=404), _Resp(status=500, text="down"))
+        self.assertIsNone(await voices.async_fetch_voice_items(session, {}))
+
+    async def test_network_errors_return_none(self) -> None:
+        for exc in (_ClientError("down"), TimeoutError(), ValueError("bad json")):
+            with self.subTest(exc=type(exc).__name__):
+                session = _SeqSession(exc)
+                self.assertIsNone(await voices.async_fetch_voice_items(session, {}))
+
+    async def test_empty_list_returns_none(self) -> None:
+        session = _SeqSession(_v2_page([], None))
+        self.assertIsNone(await voices.async_fetch_voice_items(session, {}))
 
 
 class VoiceLabelTests(unittest.TestCase):

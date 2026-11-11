@@ -345,7 +345,7 @@ Selectable via **Settings → Devices & Services → Mistral AI Conversation →
 
 ### Selecting a voice
 
-The voice list is fetched live from Mistral's `/v1/audio/voices` API, so it always reflects your account: all Mistral preset voices plus any custom voices you have created, shown with their human-readable names. If the fetch fails (network error, API issue) a built-in static list of preset voices is used as fallback.
+The voice list is fetched live from Mistral's `/v2/audio/voices` API (falling back to the older `/v1/audio/voices` if v2 is unavailable), so it always reflects your account: all Mistral preset voices plus any custom voices you have created, shown with their human-readable names. If the fetch fails (network error, API issue) a built-in static list of preset voices is used as fallback.
 
 Two places to pick a voice:
 
@@ -389,7 +389,8 @@ A: Mistral AI processes requests via their servers. See their [privacy policy](h
 ## Release Notes
 
 ### Unreleased
-- **Changed:** the *Text-to-speech voice* option is a searchable combo box. Custom (cloned) voices are listed first, and every voice is labelled with its name, languages, gender and preset slug (e.g. `Paul – Neutral (en_us) · en_paul_neutral`, `My voice (custom voice)`), using the `type`, `slug` and `gender` fields of `GET /v1/audio/voices`. A typed slug or custom voice name is saved as that voice's ID; any other typed voice ID is saved as-is. The Voice Assistants voice picker uses the same labels. Saved voices keep working unchanged.
+- **Changed:** the voice list is fetched from `GET /v2/audio/voices` (cursor pagination with `page_token`), because Mistral deprecated the offset pagination of `GET /v1/audio/voices`. v1 is still used as a fallback if v2 is missing or rejects the request (HTTP 400/404/405/422). A timeout or unreadable response while fetching voices now falls back to the built-in preset list instead of failing.
+- **Changed:** the *Text-to-speech voice* option is a searchable combo box. Custom (cloned) voices are listed first, and every voice is labelled with its name, languages, gender and preset slug (e.g. `Paul – Neutral (en_us) · en_paul_neutral`, `My voice (custom voice)`), using the `type`, `slug` and `gender` fields of the voice list. A typed slug or custom voice name is saved as that voice's ID; any other typed voice ID is saved as-is. The Voice Assistants voice picker uses the same labels. Saved voices keep working unchanged.
 - **Added:** *Speech-to-text model* and *Text-to-speech model* options (Settings → Devices & Services → Mistral AI Conversation → Configure). Each dropdown lists the Voxtral models available on your Mistral account (from `GET /v1/models`, realtime models excluded) and also accepts any typed model ID. The defaults stay `voxtral-mini-latest` and `voxtral-mini-tts-latest`; existing setups are unchanged. Saving reloads the integration, and STT/TTS error logs now name the model used.
 - **Changed:** TTS model switched from `voxtral-mini-tts-2603` to `voxtral-mini-tts-latest`, so the integration tracks Mistral's current TTS model automatically.
 - **Changed:** TTS voices are now pulled live from `GET /v1/audio/voices` everywhere — the options-flow dropdown (previously a static list) now shows the account's presets and custom voices with human-readable names, re-fetched each time the Configure dialog opens. The static `TTS_VOICES` list remains only as fallback when the fetch fails, and a previously saved legacy voice id still renders as selected.
