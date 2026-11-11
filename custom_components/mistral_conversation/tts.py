@@ -35,6 +35,7 @@ import logging
 import struct
 import time
 import wave
+from dataclasses import replace
 from typing import Any, AsyncGenerator
 
 import aiohttp
@@ -81,6 +82,7 @@ from .speech_style import (
     SpeechStyle,
     default_style_options,
     speech_style,
+    supports_speech_tags,
 )
 from .voices import (
     VoiceItem,
@@ -244,6 +246,28 @@ class MistralTTSEntity(TextToSpeechEntity):
         self._voice_refresh_task: asyncio.Task | None = None
         # The "volume boost not applied" warning is logged once per entity.
         self._gain_skip_logged = False
+        # Likewise the "pace/emotion not sent for this model" warning.
+        self._tags_skip_logged = False
+
+    def _style_for(self, call_options: dict[str, Any] | None, model: str) -> SpeechStyle:
+        """Resolve the speech style, leaving out tags the model can't read.
+
+        Older TTS models (including the ``-latest`` alias) speak the inline
+        tags as text, so pace and emotion are only sent to Voxtral TTS 3+.
+        Expressiveness and the volume boost are unaffected.
+        """
+        style = speech_style(call_options, self._entry.options)
+        if (style.pace or style.emotion) and not supports_speech_tags(model):
+            if not self._tags_skip_logged:
+                self._tags_skip_logged = True
+                _LOGGER.warning(
+                    "Speaking pace and emotion need a Voxtral TTS 3 model such as "
+                    "voxtral-mini-tts-3-0; they are not sent with %s, which would "
+                    "read the tags aloud",
+                    model,
+                )
+            style = replace(style, pace=None, emotion=None)
+        return style
 
     def _log_gain_skipped(self) -> None:
         if not self._gain_skip_logged:
@@ -363,9 +387,9 @@ class MistralTTSEntity(TextToSpeechEntity):
         over the integration default (CONF_TTS_VOICE).
         """
         voice = options.get("voice") or self._entry.options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
-        style = speech_style(options, self._entry.options)
-
         model = self._model
+        style = self._style_for(options, model)
+
         # A volume boost scales raw PCM, so ask for wav; without one nothing
         # changes (mp3).
         boost = style.gain_db > 0
@@ -444,7 +468,7 @@ class MistralTTSEntity(TextToSpeechEntity):
             return await super().async_stream_tts_audio(request)
 
         voice = request.options.get("voice") or self._entry.options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
-        style = speech_style(request.options, self._entry.options)
+        style = self._style_for(request.options, self._model)
         if style.gain_db > 0:
             # Build the 65,536-entry gain table off the event loop (cached
             # per gain value), so the first sentence does not pay for it.

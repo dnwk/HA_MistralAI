@@ -22,6 +22,7 @@ spoken or silently ignored by the API.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -74,6 +75,24 @@ class SpeechStyle:
         if self.expressiveness is None:
             return {}
         return {"expressiveness": self.expressiveness}
+
+
+# A versioned TTS model ID: "...-tts-3", "...-tts-3-0". One or two digits, so
+# dated IDs such as "voxtral-mini-tts-2603" (year+month) never match.
+_TTS_VERSION = re.compile(r"-tts-(\d{1,2})(?:-\d+)*$")
+
+
+def supports_speech_tags(model_id: str) -> bool:
+    """Whether a TTS model understands inline ``[pace=…]`` / ``[emotion=…]`` tags.
+
+    Mistral documents the tags for Voxtral TTS 3 (``voxtral-mini-tts-3-0``).
+    Older models read them aloud ("pace equals fast" was heard with
+    ``voxtral-mini-tts-latest``), and an alias such as ``-latest`` or a dated
+    ID says nothing about the version, so only an explicit version 3 or later
+    counts.
+    """
+    match = _TTS_VERSION.search(model_id or "")
+    return bool(match) and int(match.group(1)) >= 3
 
 
 def _choice(value: Any, allowed: list[str], name: str) -> str | None:

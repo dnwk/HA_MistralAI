@@ -21,6 +21,7 @@ from mistral_conversation import tts as tts_module
 from mistral_conversation.const import (
     CONF_TTS_EMOTION,
     CONF_TTS_EXPRESSIVENESS,
+    CONF_TTS_MODEL,
     CONF_TTS_PACE,
     DOMAIN,
     TTS_EMOTIONS,
@@ -31,6 +32,7 @@ from mistral_conversation.speech_style import (
     SpeechStyle,
     default_style_options,
     speech_style,
+    supports_speech_tags,
 )
 
 STYLE_LOGGER = speech_style_module._LOGGER.name
@@ -45,6 +47,8 @@ from .test_audio_models import (
 )
 
 ENTRY_STYLE = {CONF_TTS_PACE: "slow", CONF_TTS_EMOTION: "calm", CONF_TTS_EXPRESSIVENESS: 2.5}
+# Tags are only sent to Voxtral TTS 3+; the default model is the -latest alias.
+ENTRY_STYLE_V3 = {**ENTRY_STYLE, CONF_TTS_MODEL: "voxtral-mini-tts-3-0"}
 
 
 class SpeechStyleTests(unittest.TestCase):
@@ -139,11 +143,39 @@ class TtsEntityStyleTests(_RealClientErrorAsync):
 
     async def test_batch_request_carries_style(self) -> None:
         audio = base64.b64encode(b"mp3").decode()
-        entity, session = self._entity(ENTRY_STYLE, _Resp(json_data={"audio_data": audio}))
+        entity, session = self._entity(ENTRY_STYLE_V3, _Resp(json_data={"audio_data": audio}))
         await entity.async_get_tts_audio("Lights are on.", "en", {"pace": "fast"})
         payload = session.calls[0][1]["json"]
         self.assertEqual(payload["input"], "[emotion=calm][pace=fast]Lights are on.")
         self.assertEqual(payload["expressiveness"], 2.5)
+
+    async def test_tags_left_out_for_models_that_read_them_aloud(self) -> None:
+        # Seen on a live install: voxtral-mini-tts-latest said "pace equals fast".
+        audio = base64.b64encode(b"mp3").decode()
+        for model in (None, "voxtral-mini-tts-latest", "voxtral-mini-tts-2603"):
+            with self.subTest(model=model):
+                options = dict(ENTRY_STYLE)
+                if model:
+                    options[CONF_TTS_MODEL] = model
+                entity, session = self._entity(options, _Resp(json_data={"audio_data": audio}))
+                with self.assertLogs(tts_module._LOGGER.name, "WARNING") as logs:
+                    await entity.async_get_tts_audio("Lights are on.", "en", {"pace": "fast"})
+                    await entity.async_get_tts_audio("Lights are on.", "en", {})
+                payload = session.calls[0][1]["json"]
+                self.assertEqual(payload["input"], "Lights are on.")
+                self.assertEqual(payload["expressiveness"], 2.5)  # unaffected
+                tag_warnings = [r for r in logs.records if "Voxtral TTS 3" in r.getMessage()]
+                self.assertEqual(len(tag_warnings), 1)  # once per entity
+
+    async def test_no_warning_when_no_tags_are_set(self) -> None:
+        audio = base64.b64encode(b"mp3").decode()
+        entity, session = self._entity(
+            {CONF_TTS_EXPRESSIVENESS: 2.0}, _Resp(json_data={"audio_data": audio})
+        )
+        with patch.object(tts_module._LOGGER, "warning") as warning:
+            await entity.async_get_tts_audio("Hi.", "en", {})
+        warning.assert_not_called()
+        self.assertEqual(session.calls[0][1]["json"]["input"], "Hi.")
 
     async def test_batch_request_without_style_is_unchanged(self) -> None:
         audio = base64.b64encode(b"mp3").decode()
@@ -165,8 +197,8 @@ class TtsEntityStyleTests(_RealClientErrorAsync):
         self.assertEqual(payload["expressiveness"], 2.0)
         self.assertTrue(payload["stream"])
 
-    async def test_stream_request_passes_resolved_style(self) -> None:
-        entity, _ = self._entity(ENTRY_STYLE, _Resp())
+    async def _stream_style(self, entry_options: dict) -> SpeechStyle:
+        entity, _ = self._entity(entry_options, _Resp())
         entity._pipelined_stream = MagicMock(return_value="gen")
         request = SimpleNamespace(options={"voice": "v", "emotion": "happy"}, message_gen="msgs")
         with patch.object(tts_module, "TTSAudioResponse", lambda **kw: kw):
@@ -174,7 +206,30 @@ class TtsEntityStyleTests(_RealClientErrorAsync):
         self.assertEqual(response["data_gen"], "gen")
         args = entity._pipelined_stream.call_args.args
         self.assertEqual(args[:2], ("msgs", "v"))
-        self.assertEqual(args[2], SpeechStyle(pace="slow", emotion="happy", expressiveness=2.5))
+        return args[2]
+
+    async def test_stream_request_passes_resolved_style(self) -> None:
+        self.assertEqual(
+            await self._stream_style(ENTRY_STYLE_V3),
+            SpeechStyle(pace="slow", emotion="happy", expressiveness=2.5),
+        )
+
+    async def test_stream_on_latest_model_leaves_tags_out(self) -> None:
+        with self.assertLogs(tts_module._LOGGER.name, "WARNING"):
+            style = await self._stream_style(ENTRY_STYLE)
+        self.assertEqual(style, SpeechStyle(expressiveness=2.5))
+
+
+class SupportsSpeechTagsTests(unittest.TestCase):
+    def test_voxtral_tts_3_and_later(self) -> None:
+        for model in ("voxtral-mini-tts-3-0", "voxtral-mini-tts-3", "voxtral-mini-tts-4-1", "voxtral-small-tts-10"):
+            with self.subTest(model=model):
+                self.assertTrue(supports_speech_tags(model))
+
+    def test_aliases_dated_and_older_models(self) -> None:
+        for model in ("voxtral-mini-tts-latest", "voxtral-mini-tts-2603", "voxtral-mini-tts-2", "", "mistral-small-latest"):
+            with self.subTest(model=model):
+                self.assertFalse(supports_speech_tags(model))
 
 
 class OptionsFlowStyleTests(unittest.IsolatedAsyncioTestCase):
