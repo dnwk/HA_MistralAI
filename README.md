@@ -249,6 +249,11 @@ users might use `zoek op, zoek online, google`; German users `suche, google`.
 
 Enable **Allow AI to control Home Assistant devices** in the options, then expose the entities you want via **Settings → Voice Assistants → Exposed devices**.
 
+Under **Control Home Assistant** you choose which Home Assistant APIs the AI may use:
+
+- **Device control** (Assist) — controls and reads the entities you expose. This is what voice commands need.
+- **Home Assistant** — lets the AI manage Home Assistant itself (registries, system logs, automations, integration entries). It is not limited to exposed entities, and Home Assistant only allows it for **admin users**. It is offered only when an admin is chatting (for example in the Assist dialog). Voice satellites, automations and non-admin users have no admin user behind them, so for those requests it is left out and the other selected APIs are used.
+
 ### Example commands
 
 | What you say | What happens |
@@ -400,6 +405,9 @@ A: Now that Mistral has a TTS model, yes. Please refer to Text-to-speech (TTS) s
 **Q: Device control stopped working after updating to Home Assistant 2026.9.**
 A: Fixed in this version. HA 2026.9 changed how tool schemas are built, and older versions of this integration sent them to Mistral in a form it rejected (HTTP 422, usually with nothing obvious in the log). Update the integration and restart.
 
+**Q: The log says "Error getting LLM API ['assist', 'homeassistant'] … Unauthorized".**
+A: The *Home Assistant* API is admin-only, and older versions of this integration passed it on for every request, so Home Assistant refused requests from voice satellites and automations. Update the integration: admin-only APIs are now left out for requests without an admin user. If you don't want the AI to manage Home Assistant itself at all, untick *Home Assistant* under **Control Home Assistant**.
+
 **Q: Speech recognition or TTS stopped working after I changed the model.**
 A: Check the log: STT and TTS errors name the model that was used. Not every model in the dropdown is guaranteed to work with the endpoint (the list is built from your account's Voxtral models). Switch back to the default — it is always the first entry.
 
@@ -427,6 +435,7 @@ Decisions behind recent changes, and why they were made.
 - **Speech model lists come from your account, not a fixed list.** Mistral renames and retires audio models often, and its docs don't reliably say which IDs each endpoint accepts. The STT and TTS dropdowns are therefore built from `GET /v1/models`, and any model ID can be typed. Sorting is by name: IDs starting with `voxtral` that contain `tts` are TTS models; for STT only transcription models are listed — IDs containing `transcribe` and the `voxtral-mini` family. Plain `voxtral-small-*` models are chat-with-audio models that the transcription endpoint rejects ("Invalid model"), and realtime models are left out because they use a different (websocket) API. A listed model is not guaranteed to work with the endpoint; the default is always the first entry.
 - **Voices are saved by voice ID.** The voice pickers store Mistral's voice ID, as earlier versions did, so existing settings and Voice Assistants selections keep working. Mistral also accepts a preset's slug (such as `en_paul_neutral`) as the voice, so slugs work in `tts.speak`; in the Configure field a typed slug or custom voice name is converted to that voice's ID.
 - **Voice list from v2, with a narrow v1 fallback.** Mistral deprecated offset pagination on `GET /v1/audio/voices`, so the list comes from `GET /v2/audio/voices`. v1 is only tried when v2 answers HTTP 400, 404, 405 or 422 (endpoint or request not accepted). For an invalid key, a rate limit or a server error a second request would fail the same way, so none is made.
+- **Admin-only Home Assistant APIs are left out for non-admin requests.** Home Assistant marks some LLM APIs as admin-only (such as *Home Assistant*) and, when several are selected, refuses the whole set — and so the whole turn — if the request has no admin user. With *Device control* and *Home Assistant* both selected, every voice command failed with "Error getting LLM API …: Unauthorized". The integration now drops the admin-only APIs for requests without an admin user and keeps the rest, so voice control keeps working while admins chatting in the app still get everything selected. If only admin-only APIs are selected, such requests run without tools.
 - **Web search results are treated as untrusted.** On the round where the model reads search results, every tool is withdrawn, not just web search, so instructions hidden in a web page cannot trigger a device action. Device control still works on the round where the model decides to search.
 - **No household data in the web-search agent.** The web-search agent is stored in your Mistral account, so it gets fixed, generic instructions and never your rendered system prompt (which can contain your exposed entities and areas). An existing agent with the same name and model is reused instead of creating a new one on every restart.
 - **Upstream fixes are ported selectively.** This fork is based on [SnarfNL/HA_MistralAI](https://github.com/SnarfNL/HA_MistralAI). Fixes taken from it are marked *ported from upstream* in the release notes. Upstream's removal of the *Text-to-speech voice* option was not taken: this fork keeps that option as the searchable fallback voice.
@@ -438,6 +447,7 @@ Decisions behind recent changes, and why they were made.
 ## Release Notes
 
 ### Unreleased
+- **Fixed:** with the admin-only *Home Assistant* API selected under *Control Home Assistant* (alongside *Device control*), every request without an admin user — voice satellites, automations, non-admin users — failed with "Error getting LLM API ['assist', 'homeassistant'] for mistral_conversation: Unauthorized". Admin-only APIs are now left out for those requests and the other selected APIs are used; admin users still get every selected API. The option's help text explains this.
 - **Fixed:** the *Speech-to-text model* dropdown offered `voxtral-small-latest` and `voxtral-small-2507`, which are chat-with-audio models; picking one made every transcription fail with HTTP 400 "Invalid model". The list now only holds transcription models (IDs containing `transcribe`, and the `voxtral-mini` family). A model saved earlier is still shown and can be changed.
 - **Changed:** the voice list is fetched from `GET /v2/audio/voices` (cursor pagination with `page_token`), because Mistral deprecated the offset pagination of `GET /v1/audio/voices`. v1 is still used as a fallback if v2 is missing or rejects the request (HTTP 400/404/405/422). A timeout or unreadable response while fetching voices now falls back to the built-in preset list instead of failing.
 - **Changed:** the *Text-to-speech voice* option is a searchable combo box. Custom (cloned) voices are listed first, and every voice is labelled with its name, languages, gender and preset slug (e.g. `Paul – Neutral (en_us) · en_paul_neutral`, `My voice (custom voice)`), using the `type`, `slug` and `gender` fields of the voice list. A typed slug or custom voice name is saved as that voice's ID; any other typed voice ID is saved as-is. The Voice Assistants voice picker uses the same labels. Saved voices keep working unchanged.
