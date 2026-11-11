@@ -36,8 +36,9 @@
 9. [Speech recognition (STT)](#speech-recognition-stt)
 10. [Text-to-speech (TTS)](#text-to-speech-tts)
 11. [FAQ](#faq)
-12. [Release Notes](#release-notes)
-13. [License](#license)
+12. [Design notes](#design-notes)
+13. [Release Notes](#release-notes)
+14. [License](#license)
 
 ---
 
@@ -57,14 +58,16 @@ This integration makes **Mistral AI** available as a fully-featured conversation
 | Smart home control | ✅ | Control lights, switches, covers, locks, etc. |
 | Speech recognition (STT) | ✅ | Voxtral (`voxtral-mini-latest` by default, configurable) via `/v1/audio/transcriptions` |
 | Text-to-speech (TTS) | ✅ | Mistral TTS (`voxtral-mini-tts-latest` by default, configurable) via `/v1/audio/speech` |
+| Configurable speech models | ✅ | Pick the STT and TTS models from those on your Mistral account, or type any model ID |
 | Streaming TTS | ✅ | Low-latency SSE WAV with sentence-level pipelining (≥ v0.4.0) |
-| Live TTS voice list | ✅ | Voices fetched from your Mistral account — presets *and* custom voices |
+| Live TTS voice list | ✅ | Voices fetched from your Mistral account — presets *and* custom (cloned) voices, in a searchable picker |
+| AI Task | ✅ | `ai_task.generate_data` with structured output and image attachments |
 | Conversation memory | ✅ | Context kept per session until 5 min idle (HA timeout). |
 | Jinja2 system prompt | ✅ | Templates with `{{ now() }}`, `{{ ha_name }}` etc. |
 | Multilingual | ✅ | Responds in the user's language |
 | Continue conversation | ✅ | Keeps microphone open after questions (Experimental) |
 | Web search | ✅ | Model-decided web search via the Agents API, or trigger phrases (Beta) |
-| Separate devices | ✅ | Conversation and STT appear as separate HA devices |
+| Separate devices | ✅ | Conversation, STT and TTS appear as separate HA devices |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -149,6 +152,7 @@ Click the integration → **Configure** to change settings.
 | **STT language** | Auto-detect | Language for Voxtral transcription |
 | **TTS voice** | `en_paul_neutral` | Fallback default voice — searchable list of your account's voices (custom/cloned voices first, then presets); a voice ID, slug or custom voice name can also be typed |
 | **TTS mode** | `Streaming` | `Streaming` (SSE WAV with sentence-level pipelining) or `Batch` (single MP3 request) |
+
 ### Available models
 
 Verified against Mistral's model lineup, September 2026. All entries use Mistral's `-latest` aliases, which track the current model automatically as Mistral ships new versions (e.g. `mistral-large-latest` now serves Mistral Large 3).
@@ -359,7 +363,25 @@ The Configure field is a searchable combo box. Custom (cloned) voices are listed
 
 The same labels are used in the Voice Assistants voice picker.
 
-<p align=right>(<a href=#readme-top>back to top</a>)</p>
+### Using a voice in an automation
+
+Pass the voice in `tts.speak` options. A preset slug or any voice ID from your account (including a custom voice's ID) works:
+
+```yaml
+action: tts.speak
+target:
+  entity_id: tts.mistral_ai_tts  # your Mistral AI TTS entity — check under Settings → Entities
+data:
+  media_player_entity_id: media_player.living_room
+  message: "The washing machine is done."
+  options:
+    voice: en_paul_neutral
+```
+
+Without `voice`, the **Text-to-speech voice** from the integration options is used.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
 
 ## FAQ
@@ -372,6 +394,15 @@ A: Check the HA logs for the full error body. A common cause is an invalid model
 
 **Q: Can I use TTS with this integration?**
 A: Now that Mistral has a TTS model, yes. Please refer to Text-to-speech (TTS) section for details.
+
+**Q: Device control stopped working after updating to Home Assistant 2026.9.**
+A: Fixed in this version. HA 2026.9 changed how tool schemas are built, and older versions of this integration sent them to Mistral in a form it rejected (HTTP 422, usually with nothing obvious in the log). Update the integration and restart.
+
+**Q: Speech recognition or TTS stopped working after I changed the model.**
+A: Check the log: STT and TTS errors name the model that was used. Not every model in the dropdown is guaranteed to work with the endpoint (the list is built from your account's Voxtral models). Switch back to the default — it is always the first entry.
+
+**Q: My cloned voice is not in the list.**
+A: The Configure dialog re-fetches your voices each time it opens; the Voice Assistants picker refreshes when the integration reloads. If the list could not be loaded, the built-in presets are shown instead — you can still type your voice's ID in the Configure field.
 
 **Q: How much does it cost?**
 A: With `ministral-8b-latest` and typical home use, expect less than €1–2 per month. Voxtral STT adds ~€0.003/minute. See [mistral.ai/pricing](https://mistral.ai/pricing/).
@@ -386,12 +417,35 @@ A: Mistral AI processes requests via their servers. See their [privacy policy](h
 
 ---
 
+## Design notes
+
+Decisions behind recent changes, and why they were made.
+
+- **Models follow Mistral's `-latest` aliases.** The chat, STT and TTS defaults use `-latest` aliases, so new model versions arrive without an integration update. The TTS default stays `voxtral-mini-tts-latest` rather than a pinned version: Mistral's model docs list the pinned `voxtral-mini-tts-2603` as deprecated, with retirement planned for 30 April 2027.
+- **Speech model lists come from your account, not a fixed list.** Mistral renames and retires audio models often, and its docs don't reliably say which IDs each endpoint accepts. The STT and TTS dropdowns are therefore built from `GET /v1/models`, and any model ID can be typed. Sorting is by name: IDs starting with `voxtral` that contain `tts` are TTS models, other `voxtral` IDs are STT models, and realtime models are left out because they use a different (websocket) API. A listed model is not guaranteed to work with the endpoint; the default is always the first entry.
+- **Voices are saved by voice ID.** The voice pickers store Mistral's voice ID, as earlier versions did, so existing settings and Voice Assistants selections keep working. Mistral also accepts a preset's slug (such as `en_paul_neutral`) as the voice, so slugs work in `tts.speak`; in the Configure field a typed slug or custom voice name is converted to that voice's ID.
+- **Voice list from v2, with a narrow v1 fallback.** Mistral deprecated offset pagination on `GET /v1/audio/voices`, so the list comes from `GET /v2/audio/voices`. v1 is only tried when v2 answers HTTP 400, 404, 405 or 422 (endpoint or request not accepted). For an invalid key, a rate limit or a server error a second request would fail the same way, so none is made.
+- **Web search results are treated as untrusted.** On the round where the model reads search results, every tool is withdrawn, not just web search, so instructions hidden in a web page cannot trigger a device action. Device control still works on the round where the model decides to search.
+- **No household data in the web-search agent.** The web-search agent is stored in your Mistral account, so it gets fixed, generic instructions and never your rendered system prompt (which can contain your exposed entities and areas). An existing agent with the same name and model is reused instead of creating a new one on every restart.
+- **Upstream fixes are ported selectively.** This fork is based on [SnarfNL/HA_MistralAI](https://github.com/SnarfNL/HA_MistralAI). Fixes taken from it are marked *ported from upstream* in the release notes. Upstream's removal of the *Text-to-speech voice* option was not taken: this fork keeps that option as the searchable fallback voice.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
 ## Release Notes
 
 ### Unreleased
 - **Changed:** the voice list is fetched from `GET /v2/audio/voices` (cursor pagination with `page_token`), because Mistral deprecated the offset pagination of `GET /v1/audio/voices`. v1 is still used as a fallback if v2 is missing or rejects the request (HTTP 400/404/405/422). A timeout or unreadable response while fetching voices now falls back to the built-in preset list instead of failing.
 - **Changed:** the *Text-to-speech voice* option is a searchable combo box. Custom (cloned) voices are listed first, and every voice is labelled with its name, languages, gender and preset slug (e.g. `Paul – Neutral (en_us) · en_paul_neutral`, `My voice (custom voice)`), using the `type`, `slug` and `gender` fields of the voice list. A typed slug or custom voice name is saved as that voice's ID; any other typed voice ID is saved as-is. The Voice Assistants voice picker uses the same labels. Saved voices keep working unchanged.
 - **Added:** *Speech-to-text model* and *Text-to-speech model* options (Settings → Devices & Services → Mistral AI Conversation → Configure). Each dropdown lists the Voxtral models available on your Mistral account (from `GET /v1/models`, realtime models excluded) and also accepts any typed model ID. The defaults stay `voxtral-mini-latest` and `voxtral-mini-tts-latest`; existing setups are unchanged. Saving reloads the integration, and STT/TTS error logs now name the model used.
+- **Changed:** Chat model list: added `ministral-14b-latest` (Ministral 3 14B); removed `open-mistral-nemo`, which Mistral has retired, and the pinned `mistral-medium-2505` from the web-search models (the `-latest` alias covers it). The model dropdown shows a short note per model on how it fares with a free-tier API key (English, French, Dutch). Setups still on `open-mistral-nemo` need to pick another model. *Ported from upstream.*
+- **Fixed:** Streaming TTS stays playable when the first sentence fails. Before, the stream took its WAV header from sentence 0 only, so a failure there left the audio without a header. Each sentence's header is now kept separately and the stream starts with the header of the first sentence that delivers audio; pauses are only inserted between sentences that produced audio. If every sentence fails, an error is raised instead of returning silence; an emoji-only reply still ends silently. *Ported from upstream.*
+- **Fixed:** Device control stopped working on Home Assistant 2026.9+. HA now builds tool schemas with `probatio`, and the old conversion turned almost every tool's parameters into the string `"UNSUPPORTED"`, which Mistral rejected with HTTP 422 without an obvious error in the log. Schemas are now converted with `probatio.to_openapi()` when available (falling back to `voluptuous_openapi`), and anything that is still not a JSON object is replaced by an empty schema. The request is also sanitized after tools are attached, which fixes `TypeError: Type is not JSON serializable: _Unsupported`. *Ported from upstream.*
+- **Fixed:** `ai_task.generate_data`: a `structure` field using a selector with `multiple: true` is now requested as a JSON array instead of a single value. A response that does not match the requested structure is logged as a warning; the data is still returned. *Ported from upstream.*
+- **Changed:** The web-search agent stored in your Mistral account is created with fixed, generic instructions instead of your rendered system prompt, which can include your exposed entities and areas. Before, the first caller's prompt was also used for every later search. An existing agent with the same name and model is now reused, so restarts no longer add a new agent each time. The map from HA conversations to Mistral web-search conversations is capped at 32 entries (oldest dropped first).
+- **Security:** Web search results are treated as untrusted content. On the round where the model reads the results, all tools are withdrawn (before, only web search was), so instructions embedded in a web page cannot trigger a device action such as unlocking a door. The results are also fenced with a warning to ignore any instructions inside them. Device control still works on the round where the model decides to search.
+- **Fixed:** The voice picker showed at most 10 voices. The voice list endpoint is paginated with a small default page size; every page is now fetched, so all presets and custom voices appear.
 - **Changed:** TTS model switched from `voxtral-mini-tts-2603` to `voxtral-mini-tts-latest`, so the integration tracks Mistral's current TTS model automatically.
 - **Changed:** TTS voices are now pulled live from `GET /v1/audio/voices` everywhere — the options-flow dropdown (previously a static list) now shows the account's presets and custom voices with human-readable names, re-fetched each time the Configure dialog opens. The static `TTS_VOICES` list remains only as fallback when the fetch fails, and a previously saved legacy voice id still renders as selected.
 - **Fixed:** With web search enabled, *every* utterance was routed through the Agents API — including plain device commands. That path never passed Home Assistant tools, so device control silently failed on it (the model replies "I can't perform physical actions"). Web search is now opt-in per turn. Fixes #29.
