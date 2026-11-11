@@ -41,12 +41,14 @@
           "web_search": "Webzoeken inschakelen (Beta)",
           "web_search_mode": "Webzoeken-routering",
           "web_search_trigger": "Triggerwoorden voor webzoeken (optioneel)",
+          "stt_model": "Spraakherkenningsmodel (STT)",
+          "tts_model": "Tekst-naar-spraak model",
           "stt_language": "Spraakherkenning taal (STT)",
           "tts_voice": "Tekst-naar-spraak stem",
           "tts_mode": "Tekst-naar-spraak modus"
         },
         "data_description": {
-          "model": "Welk Mistral-model wordt gebruikt. Ministral-8b is aanbevolen voor home automation: snel, goedkoop en sterk in opdrachten uitvoeren.",
+          "model": "Welk Mistral-model wordt gebruikt. Ministral-8b is aanbevolen voor home automation: snel, goedkoop en sterk in opdrachten uitvoeren. Ministral-14b is nieuw (dec. 2025) en het sterkste van de kleine edge-modellen. Let op: met een gratis/Experiment-API-key lopen vooral de duurdere modellen (Medium, Large) het snelst tegen rate limits aan — zie de opmerking per model hieronder.",
           "prompt": "Instructies voor de AI. Ondersteunt Jinja2 templates — bijvoorbeeld de HA-instantienaam via ha_name, of de huidige datum via now(). Zie de README voor de volledige lijst met variabelen.",
           "llm_hass_api": "Selecteer welke Home Assistant API de AI mag gebruiken om apparaten te bedienen. 'Assist' stelt dezelfde entiteiten beschikbaar als de ingebouwde spraakassistent.",
           "temperature": "0 = deterministisch, 1 = creatief. Mistral bereik: 0.0–1.0.",
@@ -55,8 +57,10 @@
           "web_search": "Als ingeschakeld kan de AI het web doorzoeken voor actuele informatie. Gebruikt Mistral's Agents API (beta). Vereist een model dat agents ondersteunt (mistral-medium-latest of mistral-large-latest).",
           "web_search_mode": "'Laat het model beslissen' (aanbevolen): de AI zoekt alleen wanneer dat nodig is en kan in dezelfde opdracht nog steeds je apparaten bedienen. 'Altijd zoeken': elke opdracht gaat via de Agents API — langzamer, en apparaatbesturing werkt dan niet.",
           "web_search_trigger": "Optioneel. Door komma's gescheiden zinnen, bijvoorbeeld 'zoek op, zoek online, google'. Als dit is ingevuld, gaat dit vóór de routering: alleen opdrachten die met zo'n zin beginnen zoeken op het web (de zin zelf wordt uit de zoekopdracht gehaald), alle andere opdrachten zoeken nooit. Laat leeg om de routering te laten beslissen.",
+          "stt_model": "Voxtral-model dat spraak omzet in tekst. De lijst toont de Voxtral-spraakmodellen van je Mistral-account; je kunt ook zelf een model-ID invullen. Standaard: voxtral-mini-latest, dat altijd naar het huidige transcriptiemodel van Mistral wijst. Werkt spraakherkenning niet meer na een wijziging, kijk dan in het logboek en kies weer het standaardmodel.",
+          "tts_model": "Voxtral-model dat tekst omzet in spraak. De lijst toont de tekst-naar-spraak modellen van je Mistral-account; je kunt ook zelf een model-ID invullen. Standaard: voxtral-mini-tts-latest, dat altijd naar het huidige tekst-naar-spraak model van Mistral wijst. Werkt spraakuitvoer niet meer na een wijziging, kijk dan in het logboek en kies weer het standaardmodel.",
           "stt_language": "Taal voor Voxtral spraakherkenning. Laat leeg voor automatische detectie.",
-          "tts_voice": "De standaardstem die door Mistral TTS wordt gebruikt als er geen stem is geconfigureerd in de assistentinstellingen.",
+          "tts_voice": "Reservestem, gebruikt als er geen stem is gekozen onder Instellingen → Spraakassistenten en als tts.speak zonder stem wordt aangeroepen. Typ om te zoeken op naam, slug (bijvoorbeeld en_paul_neutral) of 'custom voice': de lijst bevat de vooraf ingestelde stemmen van Mistral en de eigen (gekloonde) stemmen van je account, die bovenaan staan. Je kunt ook een stem-ID invullen.",
           "tts_mode": "Streaming: lage latentie via SSE WAV met pipelining per zin. Batch: één enkele mp3-aanvraag, hogere latentie maar kleinere antwoorden cachen goed. De tts.speak service gebruikt altijd batch."
         }
       }
@@ -73,6 +77,16 @@
       "options": {
         "model": "Laat het model beslissen (aanbevolen)",
         "always": "Altijd zoeken (verouderd, langzamer)"
+      }
+    },
+    "model": {
+      "options": {
+        "ministral-3b-latest": "Ministral 3B — snelst & goedkoopst, simpele opdrachten (gratis tier)",
+        "ministral-8b-latest": "Ministral 8B — aanbevolen voor HA (gratis tier)",
+        "ministral-14b-latest": "Ministral 14B — nieuw, sterkste kleine model (gratis tier)",
+        "mistral-small-latest": "Mistral Small — balans snelheid/kwaliteit (gratis tier)",
+        "mistral-medium-latest": "Mistral Medium — nodig voor websearch; ⚠️ betaalde tier, vaak rate-limited op gratis API-keys",
+        "mistral-large-latest": "Mistral Large — meest capabel; ⚠️ betaalde tier, vaak rate-limited op gratis API-keys"
       }
     }
   }

@@ -5,7 +5,7 @@
     "@SnarfNL"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/SnarfNL/HA_MistralAI",
+  "documentation": "https://github.com/dnwk/HA_MistralAI",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "quality_scale": "platinum",

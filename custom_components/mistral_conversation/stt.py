@@ -23,10 +23,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .audio_models import configured_model
 from .const import (
+    CONF_STT_MODEL,
+    DEFAULT_STT_MODEL,
     DOMAIN,
     MISTRAL_API_BASE,
-    STT_MODEL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -126,13 +128,18 @@ class MistralSTTEntity(SpeechToTextEntity):
         self._attr_unique_id = f"{entry.entry_id}_stt"
 
     @property
+    def _model(self) -> str:
+        """Speech-to-text model from the options, else the default."""
+        return configured_model(self._entry.options, CONF_STT_MODEL, DEFAULT_STT_MODEL)
+
+    @property
     def device_info(self) -> DeviceInfo:
         """Separate device from the conversation entity."""
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_stt")},
             name="Mistral AI STT",
             manufacturer="Mistral AI",
-            model=STT_MODEL,
+            model=self._model,
             entry_type=DeviceEntryType.SERVICE,
             configuration_url="https://docs.mistral.ai/capabilities/audio_transcription",
         )
@@ -202,6 +209,7 @@ class MistralSTTEntity(SpeechToTextEntity):
         )
 
         runtime = self.hass.data[DOMAIN][self._entry.entry_id]
+        model = self._model
         try:
             form = aiohttp.FormData()
             form.add_field(
@@ -210,7 +218,7 @@ class MistralSTTEntity(SpeechToTextEntity):
                 filename="audio.wav",
                 content_type="application/octet-stream",
             )
-            form.add_field("model", STT_MODEL)
+            form.add_field("model", model)
             if lang_code:
                 form.add_field("language", lang_code)
 
@@ -224,7 +232,9 @@ class MistralSTTEntity(SpeechToTextEntity):
             ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
-                    _LOGGER.error("Mistral STT HTTP %s: %s", resp.status, body)
+                    _LOGGER.error(
+                        "Mistral STT HTTP %s (model=%s): %s", resp.status, model, body
+                    )
                     return SpeechResult("", SpeechResultState.ERROR)
                 result = await resp.json()
 

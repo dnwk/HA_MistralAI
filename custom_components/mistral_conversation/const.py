@@ -14,6 +14,8 @@ CONF_WEB_SEARCH = "web_search"
 CONF_WEB_SEARCH_MODE = "web_search_mode"
 CONF_WEB_SEARCH_TRIGGER = "web_search_trigger"
 CONF_STT_LANGUAGE = "stt_language"
+CONF_STT_MODEL = "stt_model"
+CONF_TTS_MODEL = "tts_model"
 CONF_TTS_VOICE = "tts_voice"
 CONF_TTS_MODE = "tts_mode"
 # Note: device control uses HA's native CONF_LLM_HASS_API from homeassistant.const
@@ -92,33 +94,54 @@ DEFAULT_PROMPT = (
 # ---------------------------------------------------------------------------
 # Available chat models
 # Ordered by suitability for home automation (fast + instruction-following first)
+#
+# Status verified against Mistral's model lifecycle docs, September 2026:
+#   - "-latest" aliases always resolve to Mistral's current model for that
+#     name, so they track new releases automatically (e.g. mistral-large-latest
+#     now serves Mistral Large 3, ministral-8b-latest now serves the Ministral 3
+#     generation). Only dated/pinned model IDs (e.g. mistral-medium-2505) go
+#     stale — avoid pinning those in this list.
+#   - "open-mistral-nemo" (Mistral Nemo 12B) is deprecated & retired per
+#     Mistral's model lifecycle table and has been removed from this list.
+#     Existing configs still set to it should switch to ministral-8b-latest
+#     or ministral-3b-latest.
+#   - "ministral-14b-latest" (Ministral 3 14B, released December 2025) is new:
+#     the largest model in the Ministral 3 edge family, comparable in quality
+#     to the old Mistral Small 3.2 but still cheap and fast.
+#   - Free/"Experiment" tier API keys get rate-limited trial access to all
+#     models per Mistral's own docs, but Mistral does not publish which
+#     models get throttled or blocked first, or exactly how hard. In
+#     practice the pricier models (Medium, Large) are the ones most likely
+#     to hit those limits on a free-tier key — see the model dropdown in the
+#     options dialog for a per-model note.
 # ---------------------------------------------------------------------------
 CHAT_MODELS = [
     "ministral-8b-latest",  # Best for HA: fast, great instruction following, low cost
     "ministral-3b-latest",  # Ultra-fast, lightweight, simple commands
-    "mistral-small-latest",  # Balanced: speed + quality
-    "mistral-medium-latest",  # Required for web search via Agents API
-    "mistral-large-latest",  # Most capable, best for complex reasoning
-    "open-mistral-nemo",  # Open-source, compact
+    "ministral-14b-latest",  # New (Ministral 3, Dec 2025): strongest small/edge model
+    "mistral-small-latest",  # Balanced: speed + quality (Mistral Small 4)
+    "mistral-medium-latest",  # Required for web search via Agents API; pricier — often rate-limited on free-tier keys
+    "mistral-large-latest",  # Most capable, best for complex reasoning; pricier — often rate-limited on free-tier keys
 ]
 
 # Models that support the Agents/Conversations API (required for web search)
 AGENT_CAPABLE_MODELS = [
     "mistral-small-latest",
     "mistral-medium-latest",
-    "mistral-medium-2505",
     "mistral-large-latest",
 ]
 
 # ---------------------------------------------------------------------------
 # STT
 # ---------------------------------------------------------------------------
-STT_MODEL = "voxtral-mini-latest"
+# Default speech-to-text model; overridable via the CONF_STT_MODEL option.
+DEFAULT_STT_MODEL = "voxtral-mini-latest"
 
 # ---------------------------------------------------------------------------
 # TTS
 # ---------------------------------------------------------------------------
-TTS_MODEL = "voxtral-mini-tts-latest"
+# Default text-to-speech model; overridable via the CONF_TTS_MODEL option.
+DEFAULT_TTS_MODEL = "voxtral-mini-tts-latest"
 
 # Available voices per Mistral TTS documentation (voxtral-mini-tts-2603)
 TTS_VOICES = [
@@ -180,6 +203,8 @@ TTS_INTER_SENTENCE_SILENCE_BYTES = 14_400
 # API
 # ---------------------------------------------------------------------------
 MISTRAL_API_BASE = "https://api.mistral.ai/v1"
+# Only used for endpoints that moved to v2 (GET /v2/audio/voices).
+MISTRAL_API_V2_BASE = "https://api.mistral.ai/v2"
 
 # Max tool-call round-trips to prevent infinite loops
 MAX_TOOL_ITERATIONS = 10

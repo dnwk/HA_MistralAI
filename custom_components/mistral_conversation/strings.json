@@ -41,12 +41,14 @@
           "web_search": "Enable web search (Beta)",
           "web_search_mode": "Web search routing",
           "web_search_trigger": "Web search trigger phrases (optional)",
+          "stt_model": "Speech-to-text model",
+          "tts_model": "Text-to-speech model",
           "stt_language": "Speech recognition language (STT)",
           "tts_voice": "Text-to-speech voice",
           "tts_mode": "Text-to-speech mode"
         },
         "data_description": {
-          "model": "Which Mistral model to use. Ministral-8b is recommended for home automation commands: fast, cost-effective and great at instruction-following.",
+          "model": "Which Mistral model to use. Ministral-8b is recommended for home automation commands: fast, cost-effective and great at instruction-following. Ministral-14b is new (Dec 2025) and the strongest of the small edge models. Note: on a free/Experiment-tier API key, the pricier models (Medium, Large) are the ones most likely to be rate-limited or rejected — see the note next to each model below.",
           "prompt": "Instructions for the AI. Supports Jinja2 templates — for example, the HA instance name via ha_name, or the current date via now(). See the README for the full list of variables.",
           "llm_hass_api": "Select which Home Assistant APIs the AI can use to control your devices. 'Assist' exposes the same entities as the built-in voice assistant.",
           "temperature": "0 = deterministic, 1 = creative. Mistral range: 0.0–1.0.",
@@ -55,8 +57,10 @@
           "web_search": "When enabled, the AI can search the web for up-to-date information. Uses Mistral's Agents API (beta). Requires a model that supports agents (mistral-small-latest, mistral-medium-latest or mistral-large-latest). See 'Web search routing' below — the 'Always search' option sends every request through the slower Agents API and disables device control for those turns.",
           "web_search_mode": "'Let the model decide' (recommended): the AI searches only when it decides it needs to, and can still control your devices in the same turn. 'Always search': every request goes through the Agents API — slower, and device control does not work on those turns.",
           "web_search_trigger": "Optional. Comma-separated phrases, for example 'search for, look up, google'. When set, these take precedence over the routing mode: only commands starting with one of these phrases search the web (the phrase itself is removed from the query), and all other commands never search. Leave empty to let the routing mode decide.",
+          "stt_model": "Voxtral model used to transcribe speech. The list shows the Voxtral speech models on your Mistral account; you can also type any model ID. Default: voxtral-mini-latest, which always points to Mistral's current transcription model. If speech recognition stops working after a change, check the log and switch back to the default.",
+          "tts_model": "Voxtral model used to generate speech. The list shows the text-to-speech models on your Mistral account; you can also type any model ID. Default: voxtral-mini-tts-latest, which always points to Mistral's current text-to-speech model. If speech output stops working after a change, check the log and switch back to the default.",
           "stt_language": "Language for Voxtral speech-to-text. Select 'Auto-detect' to let Voxtral determine the language automatically.",
-          "tts_voice": "Voice used by Mistral TTS. 'Nova' is neutral and works well for home automation. All voices support any language.",
+          "tts_voice": "Fallback voice, used when no voice is chosen under Settings → Voice Assistants and when tts.speak is called without a voice. Type to search by name, slug (for example en_paul_neutral) or 'custom voice': the list holds Mistral's preset voices and the custom (cloned) voices on your account, which are listed first. You can also type a voice ID.",
           "tts_mode": "Stream: low-latency SSE WAV with sentence-level pipelining. Batch: single mp3 request, higher latency but smaller responses cache well. The tts.speak service always uses batch."
         }
       }
@@ -73,6 +77,16 @@
       "options": {
         "model": "Let the model decide (recommended)",
         "always": "Always search (legacy, slower)"
+      }
+    },
+    "model": {
+      "options": {
+        "ministral-3b-latest": "Ministral 3B — fastest & cheapest, simple commands (free-tier friendly)",
+        "ministral-8b-latest": "Ministral 8B — recommended for HA (free-tier friendly)",
+        "ministral-14b-latest": "Ministral 14B — new, strongest small model (free-tier friendly)",
+        "mistral-small-latest": "Mistral Small — balanced speed & quality (free-tier friendly)",
+        "mistral-medium-latest": "Mistral Medium — needed for web search; ⚠️ paid tier, often rate-limited on free API keys",
+        "mistral-large-latest": "Mistral Large — most capable; ⚠️ paid tier, often rate-limited on free API keys"
       }
     }
   }
