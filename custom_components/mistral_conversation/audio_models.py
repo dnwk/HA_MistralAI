@@ -27,11 +27,24 @@ def configured_model(options: Mapping[str, Any], key: str, default: str) -> str:
     return default
 
 
+def _is_transcription_model(model_id: str) -> bool:
+    """Whether a (non-TTS) Voxtral ID is a speech-to-text model.
+
+    Mistral's transcription models carry ``transcribe`` in their name
+    (``voxtral-mini-transcribe-3``, ``voxtral-small-transcribe-3``) or belong
+    to the Voxtral Mini family (``voxtral-mini-latest``, ``voxtral-mini-2602``).
+    Plain ``voxtral-small-*`` models are chat-with-audio models: the
+    transcription endpoint rejects them with "Invalid model".
+    """
+    return "transcribe" in model_id or model_id.startswith("voxtral-mini")
+
+
 def split_audio_models(items: Iterable[Any]) -> tuple[list[str], list[str]]:
     """Split /v1/models entries into sorted (stt_ids, tts_ids).
 
     Only Voxtral models are kept, including their aliases. IDs containing
-    ``tts`` are text-to-speech, the rest speech-to-text. Realtime models are
+    ``tts`` are text-to-speech; of the rest, only transcription models (see
+    ``_is_transcription_model``) are speech-to-text. Realtime models are
     skipped: they use a streaming websocket API, not the endpoints this
     integration calls.
     """
@@ -47,7 +60,10 @@ def split_audio_models(items: Iterable[Any]) -> tuple[list[str], list[str]]:
                 continue
             if "realtime" in model_id:
                 continue
-            (tts if "tts" in model_id else stt).add(model_id)
+            if "tts" in model_id:
+                tts.add(model_id)
+            elif _is_transcription_model(model_id):
+                stt.add(model_id)
     return sorted(stt), sorted(tts)
 
 

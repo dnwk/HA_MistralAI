@@ -50,7 +50,7 @@
         "data_description": {
           "model": "Which Mistral model to use. Ministral-8b is recommended for home automation commands: fast, cost-effective and great at instruction-following. Ministral-14b is new (Dec 2025) and the strongest of the small edge models. Note: on a free/Experiment-tier API key, the pricier models (Medium, Large) are the ones most likely to be rate-limited or rejected — see the note next to each model below.",
           "prompt": "Instructions for the AI. Supports Jinja2 templates — for example, the HA instance name via ha_name, or the current date via now(). See the README for the full list of variables.",
-          "llm_hass_api": "Select which Home Assistant APIs the AI can use to control your devices. 'Assist' exposes the same entities as the built-in voice assistant.",
+          "llm_hass_api": "Select which Home Assistant APIs the AI can use. 'Device control' (Assist) controls the entities you expose to voice assistants. 'Home Assistant' lets the AI manage Home Assistant itself (registries, logs, automations) and is admin-only: it is only offered when an admin user is chatting. Voice satellites, automations and other users get the other selected APIs.",
           "temperature": "0 = deterministic, 1 = creative. Mistral range: 0.0–1.0.",
           "max_tokens": "Maximum length of the AI response in tokens.",
           "continue_conversation": "When enabled, the assistant automatically keeps listening after a response that ends with a question. Uses the native HA continue_conversation flag. Experimental: behaviour may vary by satellite.",

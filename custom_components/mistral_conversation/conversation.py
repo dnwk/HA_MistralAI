@@ -248,6 +248,46 @@ def _resolve_trigger(text: str, trigger: str) -> tuple[bool, str]:
     return True, stripped[len(matched):].lstrip(" :").strip()
 
 
+async def _apis_for_request(
+    hass: HomeAssistant,
+    api_ids: str | list[str] | None,
+    context: Any,
+) -> str | list[str] | None:
+    """Drop admin-only LLM APIs when the request has no admin user behind it.
+
+    Home Assistant marks some LLM APIs as admin-only (``requires_admin``, e.g.
+    the "Home Assistant" API that manages registries, logs and automations)
+    and refuses the whole merged API — so the whole turn — when the request
+    has no admin user. Voice satellites and automations have no user at all,
+    so with such an API selected every voice command failed with
+    "Error getting LLM API ...: Unauthorized". Here those requests keep the
+    other selected APIs (e.g. Device control) instead; admin users still get
+    everything that was selected. Returns None if nothing is left.
+    """
+    if not api_ids:
+        return api_ids
+    ids = [api_ids] if isinstance(api_ids, str) else list(api_ids)
+    admin_only = {
+        api.id
+        for api in llm.async_get_apis(hass)
+        if getattr(api, "requires_admin", False)
+    }
+    if not admin_only.intersection(ids):
+        return api_ids
+
+    user_id = getattr(context, "user_id", None)
+    user = await hass.auth.async_get_user(user_id) if user_id else None
+    if user is not None and user.is_admin:
+        return api_ids
+
+    kept = [api_id for api_id in ids if api_id not in admin_only]
+    _LOGGER.debug(
+        "Request has no admin user; leaving out admin-only LLM APIs %s",
+        sorted(admin_only.intersection(ids)),
+    )
+    return kept or None
+
+
 def _convert_chat_log_to_messages(
     chat_log: conversation.ChatLog,
 ) -> list[dict[str, Any]]:
@@ -516,10 +556,13 @@ class MistralConversationEntity(ConversationEntity):
             CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION
         )
 
+        llm_apis = await _apis_for_request(
+            self.hass, opts.get(CONF_LLM_HASS_API), user_input.context
+        )
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
-                opts.get(CONF_LLM_HASS_API),
+                llm_apis,
                 opts.get(CONF_PROMPT),
                 user_input.extra_system_prompt,
             )

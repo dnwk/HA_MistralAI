@@ -125,6 +125,29 @@ class SplitAudioModelsTests(unittest.TestCase):
         self.assertEqual(stt, ["voxtral-mini-2602", "voxtral-mini-latest"])
         self.assertEqual(tts, ["voxtral-mini-tts-2603", "voxtral-mini-tts-latest"])
 
+    def test_chat_with_audio_models_are_not_speech_to_text(self) -> None:
+        # The account list seen on a live install (November 2026). The plain
+        # voxtral-small models are rejected by /v1/audio/transcriptions with
+        # "Invalid model", so they must not be offered for speech-to-text.
+        items = [
+            {"id": "voxtral-mini-2602", "aliases": ["voxtral-mini-latest"]},
+            {"id": "voxtral-mini-transcribe-3-0", "aliases": ["voxtral-mini-transcribe-3"]},
+            {"id": "voxtral-small-2507", "aliases": ["voxtral-small-latest"]},
+            {"id": "voxtral-small-transcribe-3-0", "aliases": ["voxtral-small-transcribe-3"]},
+        ]
+        stt, _ = audio_models.split_audio_models(items)
+        self.assertEqual(
+            stt,
+            [
+                "voxtral-mini-2602",
+                "voxtral-mini-latest",
+                "voxtral-mini-transcribe-3",
+                "voxtral-mini-transcribe-3-0",
+                "voxtral-small-transcribe-3",
+                "voxtral-small-transcribe-3-0",
+            ],
+        )
+
     def test_duplicates_collapse(self) -> None:
         items = [
             {"id": "voxtral-mini-latest"},
