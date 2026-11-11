@@ -68,10 +68,14 @@ from .const import (
     TTS_MAX_INFLIGHT_SENTENCES,
     TTS_MIN_SENTENCE_CHARS,
     TTS_MODE_BATCH,
-    TTS_VOICES,
     TTS_WAV_HEADER_SIZE,
 )
-from .voices import VoiceItem, async_fetch_voice_items
+from .voices import (
+    VoiceItem,
+    async_fetch_voice_items,
+    static_voice_items,
+    voice_label,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,7 +139,7 @@ def _sorted_voices(items: list[VoiceItem], language: str) -> list[Voice]:
         return (2, item.name.lower())
 
     return [
-        Voice(voice_id=item.voice_id, name=item.name)
+        Voice(voice_id=item.voice_id, name=voice_label(item))
         for item in sorted(items, key=rank)
     ]
 
@@ -144,12 +148,13 @@ def _static_voices(language: str) -> list[Voice]:
     """Static TTS_VOICES fallback, language-matching ids first."""
     prefixes = _STATIC_LANG_PREFIXES.get(_base_lang(language), ())
 
-    def rank(vid: str) -> tuple[int, str]:
+    def rank(item: VoiceItem) -> tuple[int, str]:
+        vid = item.voice_id
         return (0 if vid.startswith(prefixes) else 1, vid) if prefixes else (0, vid)
 
     return [
-        Voice(voice_id=v, name=v.replace("_", " ").title())
-        for v in sorted(TTS_VOICES, key=rank)
+        Voice(voice_id=item.voice_id, name=voice_label(item))
+        for item in sorted(static_voice_items(), key=rank)
     ]
 
 

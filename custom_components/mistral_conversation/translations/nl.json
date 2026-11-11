@@ -60,7 +60,7 @@
           "stt_model": "Voxtral-model dat spraak omzet in tekst. De lijst toont de Voxtral-spraakmodellen van je Mistral-account; je kunt ook zelf een model-ID invullen. Standaard: voxtral-mini-latest, dat altijd naar het huidige transcriptiemodel van Mistral wijst. Werkt spraakherkenning niet meer na een wijziging, kijk dan in het logboek en kies weer het standaardmodel.",
           "tts_model": "Voxtral-model dat tekst omzet in spraak. De lijst toont de tekst-naar-spraak modellen van je Mistral-account; je kunt ook zelf een model-ID invullen. Standaard: voxtral-mini-tts-latest, dat altijd naar het huidige tekst-naar-spraak model van Mistral wijst. Werkt spraakuitvoer niet meer na een wijziging, kijk dan in het logboek en kies weer het standaardmodel.",
           "stt_language": "Taal voor Voxtral spraakherkenning. Laat leeg voor automatische detectie.",
-          "tts_voice": "De standaardstem die door Mistral TTS wordt gebruikt als er geen stem is geconfigureerd in de assistentinstellingen.",
+          "tts_voice": "Reservestem, gebruikt als er geen stem is gekozen onder Instellingen → Spraakassistenten en als tts.speak zonder stem wordt aangeroepen. Typ om te zoeken op naam, slug (bijvoorbeeld en_paul_neutral) of 'custom voice': de lijst bevat de vooraf ingestelde stemmen van Mistral en de eigen (gekloonde) stemmen van je account, die bovenaan staan. Je kunt ook een stem-ID invullen.",
           "tts_mode": "Streaming: lage latentie via SSE WAV met pipelining per zin. Batch: één enkele mp3-aanvraag, hogere latentie maar kleinere antwoorden cachen goed. De tts.speak service gebruikt altijd batch."
         }
       }

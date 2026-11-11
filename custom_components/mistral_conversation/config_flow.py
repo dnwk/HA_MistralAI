@@ -42,7 +42,6 @@ from .const import (
     DOMAIN,
     MISTRAL_API_BASE,
     TTS_MODES,
-    TTS_VOICES,
     WEB_SEARCH_MODES,
 )
 from .audio_models import (
@@ -51,7 +50,13 @@ from .audio_models import (
     model_choices,
 )
 from .stt import LANGUAGE_OPTIONS
-from .voices import async_fetch_voice_items
+from .voices import (
+    VoiceItem,
+    async_fetch_voice_items,
+    resolve_voice,
+    static_voice_items,
+    voice_choices,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -160,6 +165,10 @@ class MistralConversationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class MistralOptionsFlow(config_entries.OptionsFlow):
     """Options flow — HA injects self.config_entry as a read-only property."""
 
+    # Voice list fetched when the form was shown; used on submit to turn a
+    # typed slug or custom-voice name into that voice's ID.
+    _voice_items: list[VoiceItem] | None = None
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -175,6 +184,16 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                     user_input[key] = value
                 else:
                     user_input.pop(key, None)
+            # Voice: a picked entry is already a voice ID; typed text (a slug
+            # such as en_paul_neutral, or a custom voice's name) is mapped to
+            # the matching voice's ID. Blank falls back to the default voice.
+            voice = (user_input.get(CONF_TTS_VOICE) or "").strip()
+            if voice:
+                user_input[CONF_TTS_VOICE] = resolve_voice(
+                    voice, self._voice_items or static_voice_items()
+                )
+            else:
+                user_input.pop(CONF_TTS_VOICE, None)
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.config_entry.options
@@ -200,32 +219,19 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
             DEFAULT_TTS_MODEL, tts_models, current_tts_model
         )
 
-        # TTS voice options — live account list (presets + custom voices,
-        # label = human-readable name, value = voice UUID). Falls back to the
-        # static TTS_VOICES ids if the fetch fails so the dropdown is never
-        # empty. The currently saved voice is appended if absent (e.g. a
-        # legacy static id, or the live fetch failed) so the stored option
-        # still renders as selected.
-        if voice_items:
-            voice_options = [
-                selector.SelectOptionDict(label=item.name, value=item.voice_id)
-                for item in sorted(voice_items, key=lambda i: i.name.lower())
-            ]
-        else:
-            voice_options = [
-                selector.SelectOptionDict(
-                    label=v.replace("_", " ").title(), value=v
-                )
-                for v in TTS_VOICES
-            ]
-        current_voice = opts.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)
-        if current_voice not in {o["value"] for o in voice_options}:
-            voice_options.append(
-                selector.SelectOptionDict(
-                    label=current_voice.replace("_", " ").title(),
-                    value=current_voice,
-                )
-            )
+        # TTS voice options — live account list: custom (cloned) voices first,
+        # then presets, each with a searchable label (name, languages, slug).
+        # Falls back to the built-in presets if the fetch fails. The saved
+        # voice is preselected even if it was saved as a slug, and kept in the
+        # list if it matches nothing.
+        self._voice_items = voice_items
+        voice_pairs, current_voice = voice_choices(
+            voice_items, opts.get(CONF_TTS_VOICE) or DEFAULT_TTS_VOICE
+        )
+        voice_options = [
+            selector.SelectOptionDict(label=label, value=value)
+            for value, label in voice_pairs
+        ]
 
         # Build LLM API options list
         hass_apis = [
@@ -355,6 +361,8 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                     # Primary voice selection is in Settings → Voice Assistants.
                     # This setting is used as fallback when no voice is chosen
                     # there, or when TTS is called directly from an automation.
+                    # custom_value renders a searchable combo box that also
+                    # accepts a typed voice ID, slug or custom voice name.
                     vol.Optional(
                         CONF_TTS_VOICE,
                         default=current_voice,
@@ -362,6 +370,7 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                         selector.SelectSelectorConfig(
                             options=voice_options,
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                            custom_value=True,
                         )
                     ),
                     # ── TTS mode (stream vs batch) ────────────────────────

@@ -250,10 +250,16 @@ class OptionsFlowFormTests(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def _custom_value_option_lists(selector: MagicMock) -> list[list[str]]:
+        """Option lists of the model combo boxes (plain-string options).
+
+        The voice combo box also uses custom_value, but its options are
+        label/value dicts, so it is filtered out here.
+        """
         return [
             c.kwargs["options"]
             for c in selector.SelectSelectorConfig.call_args_list
             if c.kwargs.get("custom_value")
+            and all(isinstance(o, str) for o in c.kwargs["options"])
         ]
 
     @staticmethod
