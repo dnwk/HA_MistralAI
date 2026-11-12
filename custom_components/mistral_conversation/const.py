@@ -60,6 +60,14 @@ WEB_SEARCH_INSTRUCTIONS = (
     "citations. Only report what the search results say."
 )
 
+# Sent once, in the same Mistral conversation, when a search ran but Mistral
+# returned no answer message (the response held only the tool.execution entry).
+WEB_SEARCH_ANSWER_NUDGE = (
+    "Now answer my question from what your search found, following your "
+    "instructions. If it found nothing for the exact wording, give the most "
+    "recent relevant results and say when they are from."
+)
+
 # Cap on remembered HA-conversation → Mistral-conversation mappings (oldest
 # evicted first). Bounds memory over long uptimes; an evicted mapping just
 # means the next search in that HA conversation starts a fresh Mistral thread.

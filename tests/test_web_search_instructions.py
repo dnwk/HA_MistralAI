@@ -11,12 +11,18 @@ request.
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from types import SimpleNamespace
 
 from . import _ha_stubs  # noqa: F401  side-effect: install HA stubs
 
 from mistral_conversation import conversation as conv_module
-from mistral_conversation.const import DOMAIN, WEB_SEARCH_CONV_CACHE_MAX, WEB_SEARCH_INSTRUCTIONS
+from mistral_conversation.const import (
+    DOMAIN,
+    WEB_SEARCH_ANSWER_NUDGE,
+    WEB_SEARCH_CONV_CACHE_MAX,
+    WEB_SEARCH_INSTRUCTIONS,
+)
 
 from .test_audio_models import _RealClientErrorAsync, _Resp
 from .test_connectors import _SeqSession
@@ -111,3 +117,98 @@ class EmptyAnswerLoggingTests(_RealClientErrorAsync):
         with self.assertLogs(conv_module._LOGGER.name, "DEBUG") as logs:
             await entity._conversations_chat("mistral-small-latest", "latest news", "ha-1")
         self.assertTrue(any("web search answer (27 chars" in r.getMessage() for r in logs.records))
+
+
+def _search_only(conv_id: str) -> _Resp:
+    """A reply holding the search run but no answer message, as seen in HA."""
+    return _Resp(json_data={"conversation_id": conv_id, "outputs": [
+        {"type": "tool.execution", "name": "web_search",
+         "arguments": '{"query": "latest news"}', "info": {"results": 0}},
+    ]})
+
+
+class MissingAnswerTests(_RealClientErrorAsync):
+    """Mistral ran the search but returned no message.output entry."""
+
+    async def test_asks_once_more_in_the_same_conversation(self) -> None:
+        session = _SeqSession(_search_only("mc-1"), _reply("mc-1", "Headline one. Headline two."))
+        entity, _ = _entity(session)
+        answer = await entity._conversations_chat("mistral-large-latest", "latest news", "ha-1")
+        self.assertEqual(answer, "Headline one. Headline two.")
+        self.assertEqual(len(session.calls), 2)
+        method, url, kwargs = session.calls[1]
+        self.assertEqual((method, url), ("POST", "https://api.mistral.ai/v1/conversations/mc-1"))
+        self.assertEqual(kwargs["json"], {"inputs": WEB_SEARCH_ANSWER_NUDGE})
+
+    async def test_asks_only_once(self) -> None:
+        session = _SeqSession(_search_only("mc-1"), _search_only("mc-1"))
+        entity, _ = _entity(session)
+        answer = await entity._conversations_chat("mistral-large-latest", "latest news", "ha-1")
+        self.assertEqual(answer, "")
+        self.assertEqual(len(session.calls), 2)
+
+    async def test_failed_follow_up_returns_no_answer(self) -> None:
+        session = _SeqSession(_search_only("mc-1"), _Resp(status=500, text="busy"))
+        entity, _ = _entity(session)
+        with self.assertLogs(conv_module._LOGGER.name, "WARNING") as logs:
+            answer = await entity._conversations_chat("mistral-large-latest", "latest news", "ha-1")
+        self.assertEqual(answer, "")
+        self.assertIn("follow-up failed", logs.records[-1].getMessage())
+
+    async def test_search_run_is_logged(self) -> None:
+        session = _SeqSession(_search_only("mc-1"), _reply("mc-1", "x"))
+        entity, _ = _entity(session)
+        with self.assertLogs(conv_module._LOGGER.name, "DEBUG") as logs:
+            await entity._conversations_chat("mistral-large-latest", "latest news", "ha-1")
+        first = logs.records[0].getMessage()
+        self.assertIn("entries ['tool.execution']", first)
+        self.assertIn("web_search(", first)
+        self.assertIn("'results': 0", first)
+
+    async def test_reply_without_conversation_id_is_not_retried(self) -> None:
+        session = _SeqSession(_Resp(json_data={"outputs": []}))
+        entity, _ = _entity(session)
+        self.assertEqual(await entity._conversations_chat("m", "q", "ha-1"), "")
+        self.assertEqual(len(session.calls), 1)
+
+
+class StripTodayTests(unittest.TestCase):
+    """The model put today's date in news queries despite the tool description."""
+
+    TODAY = date(2026, 11, 11)
+
+    def clean(self, query: str, said: str = "What are today's top news headlines?") -> str:
+        return conv_module._strip_today(query, said, self.TODAY)
+
+    def test_written_dates_are_removed(self) -> None:
+        for query in (
+            "latest news headlines November 11 2026",
+            "latest news headlines November 11, 2026",
+            "latest news headlines for Nov 11th 2026",
+            "latest news headlines 11 November 2026",
+            "latest news headlines on the 11th of November",
+            "latest news headlines 2026-11-11",
+            "latest news headlines 11/11/2026",
+        ):
+            with self.subTest(query=query):
+                self.assertNotIn("11", self.clean(query).replace("the", ""))
+                self.assertTrue(self.clean(query).startswith("latest news headlines"))
+
+    def test_plain_form(self) -> None:
+        self.assertEqual(self.clean("top news headlines November 11 2026"), "top news headlines")
+
+    def test_other_dates_stay(self) -> None:
+        self.assertEqual(self.clean("news November 10 2026"), "news November 10 2026")
+        self.assertEqual(self.clean("news 2026-11-12"), "news 2026-11-12")
+
+    def test_user_mentioned_a_date(self) -> None:
+        query = "news November 11 2026"
+        self.assertEqual(self.clean(query, said="News on November 11?"), query)
+        self.assertEqual(self.clean(query, said="news from the 11th"), query)
+
+    def test_nothing_left_keeps_the_query(self) -> None:
+        self.assertEqual(self.clean("November 11 2026"), "November 11 2026")
+
+    def test_no_real_date_leaves_query(self) -> None:
+        self.assertEqual(conv_module._strip_today("news November 11 2026", "news", object()),
+                         "news November 11 2026")

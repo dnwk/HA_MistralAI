@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncGenerator, Collection
+from datetime import date
 from typing import Any, Literal
 
 import aiohttp
@@ -63,6 +65,7 @@ from .const import (
     DOMAIN,
     MAX_TOOL_ITERATIONS,
     MISTRAL_API_BASE,
+    WEB_SEARCH_ANSWER_NUDGE,
     WEB_SEARCH_CONV_CACHE_MAX,
     WEB_SEARCH_INSTRUCTIONS,
     WEB_SEARCH_MODE_ALWAYS,
@@ -231,6 +234,78 @@ def _web_search_payload(model: str, user_text: str, language: str | None) -> dic
         "tools": [{"type": "web_search"}],
         "completion_args": {"temperature": 0.3, "top_p": 0.95},
     }
+
+
+_MONTHS = (
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+)
+
+
+def _strip_today(query: str, user_text: str, today: Any) -> str:
+    """Drop today's date from a search query the model wrote.
+
+    Asked for "today's news", the model searched for "latest news headlines
+    November 11 2026" although the tool description tells it not to. A web
+    search is current anyway, so today's date only narrows it. The query is
+    left alone when the user mentioned a date themselves (any digit, or the
+    name of this month). English month names and numeric dates only.
+    """
+    if not isinstance(today, date):
+        return query
+    month = _MONTHS[today.month - 1]
+    spoken = (user_text or "").lower()
+    if any(ch.isdigit() for ch in spoken) or month in spoken:
+        return query
+    mon = rf"(?:{month}|{month[:3]}\.?" + (r"|sept\.?" if today.month == 9 else "") + ")"
+    day = rf"0?{today.day}(?:st|nd|rd|th)?"
+    year = str(today.year)
+    forms = "|".join((
+        rf"{mon}\s+{day}(?:,?\s+{year})?",
+        rf"{day}\s+(?:of\s+)?{mon}(?:,?\s+{year})?",
+        rf"{year}-{today.month:02d}-{today.day:02d}",
+        rf"0?{today.month}/0?{today.day}/{year}",
+        rf"0?{today.day}/0?{today.month}/{year}",
+    ))
+    cleaned = re.sub(
+        rf"(?:\b(?:on|for|of|from)\s+)?\b(?:{forms})(?![\w/-])",
+        " ",
+        query,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,;-")
+    return cleaned or query
+
+
+def _conversation_answer(data: dict[str, Any]) -> str:
+    """Text of the ``message.output`` entries of a Conversations API reply."""
+    parts: list[str] = []
+    for output in data.get("outputs", []):
+        if not isinstance(output, dict) or output.get("type") == "tool.execution":
+            continue
+        content = output.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for chunk in content:
+                if isinstance(chunk, dict) and chunk.get("type") == "text":
+                    parts.append(chunk.get("text", ""))
+    return "".join(parts).strip() or str(data.get("message") or "")
+
+
+def _describe_reply(data: dict[str, Any]) -> str:
+    """Entry types and tool runs of a Conversations API reply, for the log."""
+    outputs = [o for o in data.get("outputs", []) if isinstance(o, dict)]
+    runs = [
+        f"{o.get('name')}({str(o.get('arguments') or '')[:200]}) "
+        f"info={str(o.get('info') or {})[:300]}"
+        for o in outputs
+        if o.get("type") == "tool.execution"
+    ]
+    return (
+        f"entries {[o.get('type') for o in outputs]}, "
+        f"tool runs: {'; '.join(runs) or 'none'}"
+    )
 
 
 def _web_search_results_message(query: str, results: str) -> dict[str, Any]:
@@ -905,8 +980,14 @@ class MistralConversationEntity(ConversationEntity):
             # pending tool result behind.
             if captured_searches or captured_connectors:
                 if captured_searches:
-                    query = captured_searches[0]
-                    _LOGGER.debug("Model requested web search: %s", query)
+                    query = _strip_today(
+                        captured_searches[0], user_input.text, dt_util.now().date()
+                    )
+                    _LOGGER.debug(
+                        "Model requested web search: %s (searching for: %s)",
+                        captured_searches[0],
+                        query,
+                    )
                     try:
                         results = await self._conversations_chat(
                             model=model,
@@ -984,6 +1065,11 @@ class MistralConversationEntity(ConversationEntity):
         WEB_SEARCH_INSTRUCTIONS and the ``web_search`` tool in the request
         itself; no agent is stored in the Mistral account. A follow-up in the
         same HA conversation appends to the Mistral conversation started then.
+
+        Mistral sometimes runs the search and returns only the
+        ``tool.execution`` entry, with no answer message. The answer is then
+        asked for once more in the same Mistral conversation, which still holds
+        the search results.
         """
         runtime = self._runtime
         mistral_conv_id = runtime.web_search_conversations.get(conv_id)
@@ -994,18 +1080,7 @@ class MistralConversationEntity(ConversationEntity):
             url = f"{MISTRAL_API_BASE}/conversations"
             payload = _web_search_payload(model, user_text, language)
 
-        async with runtime.session.post(
-            url,
-            headers=runtime.headers,
-            json=_sanitize(payload),
-            timeout=aiohttp.ClientTimeout(total=90),
-        ) as resp:
-            if resp.status >= 400:
-                body = await resp.text()
-                raise HomeAssistantError(
-                    f"Mistral Conversations API error {resp.status}: {body}"
-                )
-            data = await resp.json()
+        data = await self._post_conversation(url, payload)
 
         new_conv_id = data.get("conversation_id") or data.get("id")
         if new_conv_id:
@@ -1017,25 +1092,51 @@ class MistralConversationEntity(ConversationEntity):
             while len(convs) > WEB_SEARCH_CONV_CACHE_MAX:
                 convs.pop(next(iter(convs)))
 
-        parts: list[str] = []
-        for output in data.get("outputs", []):
-            if output.get("type") == "tool.execution":
-                continue
-            content = output.get("content")
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                for chunk in content:
-                    if isinstance(chunk, dict) and chunk.get("type") == "text":
-                        parts.append(chunk.get("text", ""))
-        answer = "".join(parts).strip() or str(data.get("message") or "")
+        answer = _conversation_answer(data)
         _LOGGER.debug(
-            "Mistral web search answer (%d chars, entries %s): %s",
+            "Mistral web search answer (%d chars, %s): %s",
             len(answer),
-            [o.get("type") for o in data.get("outputs", []) if isinstance(o, dict)],
+            _describe_reply(data),
+            answer[:400],
+        )
+        if answer or not new_conv_id:
+            return answer
+
+        _LOGGER.debug("Mistral web search wrote no answer; asking for it once more")
+        try:
+            data = await self._post_conversation(
+                f"{MISTRAL_API_BASE}/conversations/{new_conv_id}",
+                {"inputs": WEB_SEARCH_ANSWER_NUDGE},
+            )
+        except (HomeAssistantError, aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.warning("Mistral web search follow-up failed: %s", err)
+            return ""
+        answer = _conversation_answer(data)
+        _LOGGER.debug(
+            "Mistral web search answer after asking again (%d chars, %s): %s",
+            len(answer),
+            _describe_reply(data),
             answer[:400],
         )
         return answer
+
+    async def _post_conversation(
+        self, url: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST to the Conversations API and return the decoded reply."""
+        runtime = self._runtime
+        async with runtime.session.post(
+            url,
+            headers=runtime.headers,
+            json=_sanitize(payload),
+            timeout=aiohttp.ClientTimeout(total=90),
+        ) as resp:
+            if resp.status >= 400:
+                body = await resp.text()
+                raise HomeAssistantError(
+                    f"Mistral Conversations API error {resp.status}: {body}"
+                )
+            return await resp.json()
 
     # ------------------------------------------------------------------
     # Streaming HTTP + chat_log delta integration
