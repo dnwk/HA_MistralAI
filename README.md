@@ -270,6 +270,34 @@ Requirements and limits:
 - Connectors are in Mistral's Public Preview, so the API may change.
 - Connectors you set up in Le Chat appear only if Mistral's API lists them for your key; Mistral's docs describe Studio/API connectors.
 
+#### Testing and troubleshooting connectors
+
+Test connectors in Home Assistant itself — your API key stays there:
+
+1. Update the integration (HACS) and **fully restart** Home Assistant.
+2. Check that **Use my Mistral connectors** is on under **Configure** (it is on by default).
+3. Ask the assistant something one of your connectors can answer, for example *"what's on my calendar today?"*.
+
+If nothing seems to happen, turn on debug logging for the integration — from the integration's ⋮ menu → **Enable debug logging**, or in `configuration.yaml`:
+
+```yaml
+logger:
+  logs:
+    custom_components.mistral_conversation: debug
+```
+
+Then look for these lines in **Settings → System → Logs**:
+
+| Log line | Level | Meaning |
+|---|---|---|
+| `Mistral connectors available: gmail, calendar` | debug | The connectors offered to the assistant. `none` means the API key sees no usable connector — check its *Private and shared connectors* scope, and that the connectors are connected in Mistral Studio. |
+| `Skipping connector …: not connected/authenticated` / `…: blocked by …` | debug | A connector Mistral reports as unusable; connect or unblock it in Mistral Studio. |
+| `Calling Mistral connector <name> (model …): <request>` | debug | The model chose a connector; shows the request and which model ran it. |
+| `Could not read the Mistral connector list …` | warning (once) | The connector list request failed; it is retried every minute and the last good list is kept. |
+| `Mistral connector <name> failed: HTTP …` | warning | Mistral rejected or failed a connector call; the message includes Mistral's reason. |
+
+Turn debug logging off again afterwards: the `Calling Mistral connector` line contains your request text.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
@@ -483,6 +511,9 @@ A: The *Home Assistant* API is admin-only, and older versions of this integratio
 **Q: Speech recognition or TTS stopped working after I changed the model.**
 A: Check the log: STT and TTS errors name the model that was used. Not every model in the dropdown is guaranteed to work with the endpoint (the list is built from your account's Voxtral models). Switch back to the default — it is always the first entry.
 
+**Q: The assistant doesn't use my Mistral connectors.**
+A: Turn on debug logging and look for `Mistral connectors available: …` — see [Testing and troubleshooting connectors](#testing-and-troubleshooting-connectors). The usual causes are an API key without the *Private and shared connectors* scope (it then only sees connectors shared with your workspace), a connector that isn't connected in Mistral Studio yet, or the *Use my Mistral connectors* option being off.
+
 **Q: My cloned voice is not in the list.**
 A: The Configure dialog re-fetches your voices each time it opens; the Voice Assistants picker refreshes when the integration reloads. If the list could not be loaded, the built-in presets are shown instead — you can still type your voice's ID in the Configure field.
 
@@ -525,7 +556,7 @@ Decisions behind recent changes, and why they were made.
 ## Release Notes
 
 ### Unreleased
-- **Added:** *Use my Mistral connectors* (on by default). Every usable connector (MCP server) registered in your Mistral account is offered to the assistant as a tool; when the model uses one, the request runs through Mistral's Conversations API with that connector attached (`store: false`) and Mistral executes it. Results are treated as untrusted and all tools are withdrawn for the rest of that turn. The connector list (`GET /v1/connectors`) is cached for 10 minutes; unauthenticated or blocked connectors are skipped. With a Ministral chat model, connector requests run on `mistral-small-latest`. Private connectors need an API key with the *Private and shared connectors* scope; OAuth connectors must be connected in Mistral Studio. Connectors are in Mistral's Public Preview.
+- **Added:** *Use my Mistral connectors* (on by default). Every usable connector (MCP server) registered in your Mistral account is offered to the assistant as a tool; when the model uses one, the request runs through Mistral's Conversations API with that connector attached (`store: false`) and Mistral executes it. Results are treated as untrusted and all tools are withdrawn for the rest of that turn. The connector list (`GET /v1/connectors`) is cached for 10 minutes; unauthenticated or blocked connectors are skipped. With a Ministral chat model, connector requests run on `mistral-small-latest`. Private connectors need an API key with the *Private and shared connectors* scope; OAuth connectors must be connected in Mistral Studio. Connectors are in Mistral's Public Preview. Testing steps and the log lines to look for are in [Testing and troubleshooting connectors](#testing-and-troubleshooting-connectors).
 - **Fixed:** with *Speaking pace* or *Emotion* set, TTS models that don't understand Mistral's speech tags read them aloud ("pace equals fast" with `voxtral-mini-tts-latest`). The tags are now only sent when the *Text-to-speech model* is Voxtral TTS 3 or later (such as `voxtral-mini-tts-3-0`); otherwise they are left out with one warning in the log. Expressiveness and the volume boost are unaffected.
 - **Added:** *Volume boost* option for text-to-speech (0 to +12 dB, default 0 = unchanged). Mistral has no volume setting, so the integration scales the 16-bit PCM itself with a soft limiter, both for streamed Voice Assistant replies and for `tts.speak` (which then returns WAV instead of MP3). `tts.speak` can override it with the `volume_boost` option, and the setting is part of Home Assistant's TTS cache key, so changing it doesn't replay cached audio at the old volume. +3 to +6 dB stays clean; higher values squash loud parts. *Ported from upstream (draft at the time); the per-call option and cache handling are additions.*
 - **Added:** *Speaking pace*, *Emotion* and *Expressiveness* options for text-to-speech. Pace (very slow … very fast) and emotion (34 values such as calm, warm, happy) are sent as Mistral's inline `[pace=…]` / `[emotion=…]` tags, expressiveness (1.0–5.0) as a request field. All are off by default, apply to Voice Assistant replies and `tts.speak`, and can be overridden per call with the `pace`, `emotion` and `expressiveness` options. Mistral offers no speed, pitch or volume setting. Mistral documents the tags for Voxtral TTS 3; with an older TTS model a tag may be read aloud.
