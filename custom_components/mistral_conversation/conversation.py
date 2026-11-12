@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import re
@@ -49,6 +50,7 @@ from .const import (
     CONF_MAX_TOKENS,
     CONF_MODEL,
     CONF_PROMPT,
+    CONF_REASONING_EFFORT,
     CONF_TEMPERATURE,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_MODE,
@@ -71,8 +73,23 @@ from .const import (
     WEB_SEARCH_MODE_ALWAYS,
     WEB_SEARCH_TOOL_NAME,
 )
+from .reasoning import effort_for, post_with_effort_fallback, split_content
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _supports_thinking_content() -> bool:
+    """Whether HA's chat log keeps a model's reasoning apart from its answer."""
+    try:
+        fields = dataclasses.fields(conversation.AssistantContent)
+    except TypeError:
+        return False
+    return any(f.name == "thinking_content" for f in fields)
+
+
+# With it, reasoning goes into the chat log's thinking_content: shown in the
+# Assist debug view, never spoken. Without it, reasoning is dropped.
+_THINKING_CONTENT = _supports_thinking_content()
 
 
 async def async_setup_entry(
@@ -222,17 +239,22 @@ def _web_search_tool_def() -> dict[str, Any]:
     }
 
 
-def _web_search_payload(model: str, user_text: str, language: str | None) -> dict[str, Any]:
+def _web_search_payload(
+    model: str, user_text: str, language: str | None, reasoning_effort: str | None = None
+) -> dict[str, Any]:
     """Body for starting a web-search conversation without a stored agent."""
     instructions = WEB_SEARCH_INSTRUCTIONS
     if language:
         instructions += f" Reply in the language with code '{language}'."
+    completion_args: dict[str, Any] = {"temperature": 0.3, "top_p": 0.95}
+    if reasoning_effort:
+        completion_args["reasoning_effort"] = reasoning_effort
     return {
         "model": model,
         "inputs": user_text,
         "instructions": instructions,
         "tools": [{"type": "web_search"}],
-        "completion_args": {"temperature": 0.3, "top_p": 0.95},
+        "completion_args": completion_args,
     }
 
 
@@ -458,14 +480,17 @@ def _convert_chat_log_to_messages(
 
                 for tc in content.tool_calls:
                     if res := tool_results.get(tc.id):
+                        # HA renamed tool_result to result and warns on the
+                        # old name; older HA versions only have tool_result.
+                        result = res.result if hasattr(res, "result") else res.tool_result
                         messages.append({
                             "role": "tool",
                             "tool_call_id": _to_mistral_id(str(res.tool_call_id)),
                             "name": str(res.tool_name),
                             "content": json.dumps(
-                                _sanitize(res.tool_result)
-                                if isinstance(res.tool_result, (dict, list))
-                                else res.tool_result
+                                _sanitize(result)
+                                if isinstance(result, (dict, list))
+                                else result
                             ),
                         })
             else:
@@ -555,9 +580,16 @@ async def _async_stream_delta(
                 choice = data.get("choices", [{}])[0]
                 delta = choice.get("delta", {})
 
-                # Yield text delta — always a separate dict, never mixed with tool_calls
+                # Text delta — always a separate dict, never mixed with
+                # tool_calls. A reasoning model sends a list of chunks while it
+                # thinks: only text chunks are the answer; the reasoning goes to
+                # thinking_content (never spoken) or is dropped.
                 if delta.get("content"):
-                    yield {"content": str(delta["content"])}
+                    text, thinking = split_content(delta["content"])
+                    if thinking and _THINKING_CONTENT:
+                        yield {"thinking_content": thinking}
+                    if text:
+                        yield {"content": text}
 
                 # Accumulate streaming tool call fragments
                 if delta.get("tool_calls"):
@@ -733,10 +765,12 @@ class MistralConversationEntity(ConversationEntity):
             else CONNECTOR_FALLBACK_MODEL
         )
 
+        effort = effort_for(connector_model, self._entry.options.get(CONF_REASONING_EFFORT))
+
         async def run(connector: MistralConnector, request: str) -> ConnectorResult:
             try:
                 answer, sources = await self._async_connector_call(
-                    connector_model, connector, request, language
+                    connector_model, connector, request, language, effort
                 )
             except HomeAssistantError as err:
                 _LOGGER.warning("Mistral connector %s failed: %s", connector.name, err)
@@ -766,16 +800,23 @@ class MistralConversationEntity(ConversationEntity):
             _LOGGER.exception("Could not record Mistral connector sources")
 
     async def _async_connector_call(
-        self, model: str, connector: MistralConnector, request: str, language: str | None
+        self,
+        model: str,
+        connector: MistralConnector,
+        request: str,
+        language: str | None,
+        reasoning_effort: str | None = None,
     ) -> tuple[str, tuple[ConnectorSource, ...]]:
         """One stateless Conversations request with a single connector attached."""
         runtime = self._runtime
         _LOGGER.debug("Calling Mistral connector %s (model %s): %s", connector.name, model, request)
+        payload = connector_payload(model, connector, request, language, reasoning_effort)
         try:
-            async with runtime.session.post(
+            async with post_with_effort_fallback(
+                runtime.session,
                 f"{MISTRAL_API_BASE}/conversations",
+                _sanitize(payload),
                 headers=runtime.headers,
-                json=_sanitize(connector_payload(model, connector, request, language)),
                 timeout=aiohttp.ClientTimeout(total=CONNECTOR_CALL_TIMEOUT),
             ) as resp:
                 if resp.status >= 400:
@@ -937,6 +978,8 @@ class MistralConversationEntity(ConversationEntity):
                 "temperature": temperature,
                 "stream": True,
             }
+            if effort := effort_for(model, opts.get(CONF_REASONING_EFFORT)):
+                raw_payload["reasoning_effort"] = effort
             if tools:
                 raw_payload["tools"] = tools
                 raw_payload["tool_choice"] = "auto"
@@ -1078,7 +1121,12 @@ class MistralConversationEntity(ConversationEntity):
             payload: dict[str, Any] = {"inputs": user_text}
         else:
             url = f"{MISTRAL_API_BASE}/conversations"
-            payload = _web_search_payload(model, user_text, language)
+            payload = _web_search_payload(
+                model,
+                user_text,
+                language,
+                effort_for(model, self._entry.options.get(CONF_REASONING_EFFORT)),
+            )
 
         data = await self._post_conversation(url, payload)
 
@@ -1125,10 +1173,11 @@ class MistralConversationEntity(ConversationEntity):
     ) -> dict[str, Any]:
         """POST to the Conversations API and return the decoded reply."""
         runtime = self._runtime
-        async with runtime.session.post(
+        async with post_with_effort_fallback(
+            runtime.session,
             url,
+            _sanitize(payload),
             headers=runtime.headers,
-            json=_sanitize(payload),
             timeout=aiohttp.ClientTimeout(total=90),
         ) as resp:
             if resp.status >= 400:
@@ -1161,10 +1210,11 @@ class MistralConversationEntity(ConversationEntity):
         """
         runtime = self._runtime
         try:
-            async with runtime.session.post(
+            async with post_with_effort_fallback(
+                runtime.session,
                 f"{MISTRAL_API_BASE}/chat/completions",
+                payload,
                 headers=runtime.headers,
-                json=payload,
                 timeout=aiohttp.ClientTimeout(total=90),
             ) as resp:
                 if resp.status == 401:

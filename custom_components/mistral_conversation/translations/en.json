@@ -37,6 +37,7 @@
           "llm_hass_api": "Control Home Assistant",
           "temperature": "Temperature (creativity)",
           "max_tokens": "Maximum tokens in response",
+          "reasoning_effort": "Reasoning effort",
           "continue_conversation": "Enable conversations and listen to responses (Experimental)",
           "web_search": "Enable web search (Beta)",
           "web_search_mode": "Web search routing",
@@ -58,6 +59,7 @@
           "llm_hass_api": "Select which Home Assistant APIs the AI can use. 'Device control' (Assist) controls the entities you expose to voice assistants. 'Home Assistant' lets the AI manage Home Assistant itself (registries, logs, automations) and is admin-only: it is only offered when an admin user is chatting. Voice satellites, automations and other users get the other selected APIs.",
           "temperature": "0 = deterministic, 1 = creative. Mistral range: 0.0–1.0.",
           "max_tokens": "Maximum length of the AI response in tokens.",
+          "reasoning_effort": "How much Mistral's reasoning models (such as Mistral Large 4, Medium 3.5 and Small 4) think before they answer. Lower is faster; higher can help with hard questions but adds seconds to every reply, including voice replies and web searches. Mistral Large 4 accepts Low, Medium and High; Medium 3.5 and Small 4 accept None and High. If the model doesn't accept the chosen level (or doesn't reason at all), it is left out for that model and a warning is logged. Also used for web searches, connector requests and AI tasks. 'Default' sends nothing, so Mistral's default applies. The reasoning itself is never spoken; it shows separately in the Assist debug view.",
           "continue_conversation": "When enabled, the assistant automatically keeps listening after a response that ends with a question. Uses the native HA continue_conversation flag. Experimental: behaviour may vary by satellite.",
           "web_search": "When enabled, the AI can search the web for up-to-date information. Uses Mistral's Agents API (beta). Requires a model that supports agents (mistral-small-latest, mistral-medium-latest or mistral-large-latest). See 'Web search routing' below — the 'Always search' option sends every request through the slower Agents API and disables device control for those turns.",
           "web_search_mode": "'Let the model decide' (recommended): the AI searches only when it decides it needs to, and can still control your devices in the same turn. 'Always search': every request goes through the Agents API — slower, and device control does not work on those turns.",
@@ -146,6 +148,15 @@
         "urgent": "Urgent",
         "warm": "Warm",
         "wistful": "Wistful"
+      }
+    },
+    "reasoning_effort": {
+      "options": {
+        "default": "Default (not set)",
+        "none": "None — minimal thinking (Medium 3.5, Small 4)",
+        "low": "Low — fastest for Large 4",
+        "medium": "Medium",
+        "high": "High — slowest, most thorough"
       }
     }
   }

@@ -23,7 +23,15 @@ CONF_TTS_PACE = "tts_pace"
 CONF_TTS_EMOTION = "tts_emotion"
 CONF_TTS_EXPRESSIVENESS = "tts_expressiveness"
 CONF_TTS_GAIN_DB = "tts_gain_db"
+CONF_REASONING_EFFORT = "reasoning_effort"
 # Note: device control uses HA's native CONF_LLM_HASS_API from homeassistant.const
+
+# Reasoning effort for Mistral's reasoning models (Mistral Large 4, Medium 3.5,
+# Small 4). "default" sends nothing, so Mistral's own default applies. Large 4
+# accepts low/medium/high; Small 4 and Medium 3.5 accept none/high. A value a
+# model rejects is dropped for that model (see reasoning.py).
+REASONING_EFFORT_DEFAULT = "default"
+REASONING_EFFORTS = ("none", "low", "medium", "high")
 
 # tts_mode values
 TTS_MODE_STREAM = "stream"

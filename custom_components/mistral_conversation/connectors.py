@@ -252,19 +252,26 @@ def connector_tools(
 
 
 def connector_payload(
-    model: str, connector: MistralConnector, request: str, language: str | None
+    model: str,
+    connector: MistralConnector,
+    request: str,
+    language: str | None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Body for ``POST /v1/conversations``: one connector, nothing stored."""
     instructions = CONNECTOR_INSTRUCTIONS
     if language:
         instructions += f" Reply in the language with code '{language}'."
-    return {
+    payload: dict[str, Any] = {
         "model": model,
         "inputs": request,
         "instructions": instructions,
         "tools": [{"type": "connector", "connector_id": connector.connector_id}],
         "store": False,
     }
+    if reasoning_effort:
+        payload["completion_args"] = {"reasoning_effort": reasoning_effort}
+    return payload
 
 
 def _add_source(sources: list[ConnectorSource], title: Any, url: Any) -> None:

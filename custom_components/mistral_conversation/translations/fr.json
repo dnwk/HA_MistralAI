@@ -37,6 +37,7 @@
           "llm_hass_api": "Contrôler Home Assistant",
           "temperature": "Température (créativité)",
           "max_tokens": "Nombre maximum de tokens dans la réponse",
+          "reasoning_effort": "Effort de raisonnement",
           "continue_conversation": "Activer les conversations et écouter les réponses (Expérimental)",
           "web_search": "Activer la recherche sur le web (Beta)",
           "web_search_mode": "Routage de la recherche web",
@@ -58,6 +59,7 @@
           "llm_hass_api": "Sélectionnez les API de Home Assistant que l'IA peut utiliser. « Device control » (Assist) contrôle les entités exposées aux assistants vocaux. « Home Assistant » permet à l'IA de gérer Home Assistant lui-même (registres, journaux, automatisations) et est réservé aux administrateurs : il n'est proposé que lorsqu'un administrateur discute. Les satellites vocaux, les automatisations et les autres utilisateurs reçoivent les autres API sélectionnées.",
           "temperature": "0 = déterministe, 1 = créatif. Plage de Mistral : 0.0–1.0.",
           "max_tokens": "Longueur maximum de la réponse de l'IA en tokens.",
+          "reasoning_effort": "Quantité de réflexion des modèles de raisonnement de Mistral (comme Mistral Large 4, Medium 3.5 et Small 4) avant de répondre. Plus bas est plus rapide ; plus haut peut aider pour les questions difficiles mais ajoute des secondes à chaque réponse, y compris les réponses vocales et les recherches web. Mistral Large 4 accepte Faible, Moyen et Élevé ; Medium 3.5 et Small 4 acceptent Aucun et Élevé. Si le modèle n'accepte pas le niveau choisi (ou ne raisonne pas), il est omis pour ce modèle et un avertissement est journalisé. Utilisé aussi pour les recherches web, les connecteurs et les tâches IA. « Par défaut » n'envoie rien : la valeur par défaut de Mistral s'applique. Le raisonnement n'est jamais prononcé ; il apparaît séparément dans la vue de débogage d'Assist.",
           "continue_conversation": "Quand activé, l'assistant continue automatiquement d'écouter après une réponse qui finit sur une question. Utilise le signal continue_conversation natif à HA. Expérimental : le comportement peut varier par satellite.",
           "web_search": "Quand activé, l'IA peut chercher sur internet pour des informations à jour. Utilise l'API Agents de Mistral (beta). Requiert un modèle qui prend en charge les agents (mistral-medium-latest ou mistral-large-latest).",
           "web_search_mode": "« Laisser le modèle décider » (recommandé) : l'IA ne recherche que lorsqu'elle en a besoin et peut toujours contrôler vos appareils dans le même tour. « Toujours rechercher » : chaque requête passe par l'API Agents — plus lent, et le contrôle des appareils ne fonctionne pas dans ce cas.",
@@ -146,6 +148,15 @@
         "urgent": "Pressant",
         "warm": "Chaleureux",
         "wistful": "Nostalgique"
+      }
+    },
+    "reasoning_effort": {
+      "options": {
+        "default": "Par défaut (non défini)",
+        "none": "Aucun — réflexion minimale (Medium 3.5, Small 4)",
+        "low": "Faible — le plus rapide pour Large 4",
+        "medium": "Moyen",
+        "high": "Élevé — le plus lent, le plus approfondi"
       }
     }
   }

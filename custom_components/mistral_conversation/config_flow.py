@@ -19,6 +19,7 @@ from .const import (
     CONF_MAX_TOKENS,
     CONF_MODEL,
     CONF_PROMPT,
+    CONF_REASONING_EFFORT,
     CONF_STT_MODEL,
     CONF_TEMPERATURE,
     CONF_TTS_EMOTION,
@@ -53,6 +54,8 @@ from .const import (
     TTS_GAIN_DB_MAX,
     TTS_MODES,
     TTS_PACES,
+    REASONING_EFFORT_DEFAULT,
+    REASONING_EFFORTS,
     TTS_STYLE_DEFAULT,
     WEB_SEARCH_MODES,
 )
@@ -211,6 +214,9 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
             for key in (CONF_TTS_PACE, CONF_TTS_EMOTION):
                 if user_input.get(key) in (None, "", TTS_STYLE_DEFAULT):
                     user_input.pop(key, None)
+            # Reasoning effort: "default" sends nothing, so it is not stored.
+            if user_input.get(CONF_REASONING_EFFORT) not in REASONING_EFFORTS:
+                user_input.pop(CONF_REASONING_EFFORT, None)
             if user_input.get(CONF_TTS_EXPRESSIVENESS) is None:
                 user_input.pop(CONF_TTS_EXPRESSIVENESS, None)
             if not user_input.get(CONF_TTS_GAIN_DB):
@@ -314,6 +320,19 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                             max=8192,
                             step=64,
                             mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    # ── Reasoning effort (reasoning models only) ─────────
+                    # "default" sends nothing. A value the model rejects is
+                    # dropped for that model and logged (reasoning.py).
+                    vol.Optional(
+                        CONF_REASONING_EFFORT,
+                        default=opts.get(CONF_REASONING_EFFORT, REASONING_EFFORT_DEFAULT),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[REASONING_EFFORT_DEFAULT, *REASONING_EFFORTS],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="reasoning_effort",
                         )
                     ),
                     # ── Continue conversation (experimental) ──────────────

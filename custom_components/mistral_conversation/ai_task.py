@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 from .const import (
     CONF_MAX_TOKENS,
     CONF_MODEL,
+    CONF_REASONING_EFFORT,
     CONF_TEMPERATURE,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
@@ -41,6 +42,7 @@ from .conversation import (
     _sanitize,
     _schema_to_openapi,
 )
+from .reasoning import effort_for, post_with_effort_fallback
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -240,12 +242,15 @@ class MistralAITaskEntity(AITaskEntity):
         response_format = self._build_response_format(task)
         if response_format:
             payload["response_format"] = response_format
+        if effort := effort_for(model, opts.get(CONF_REASONING_EFFORT)):
+            payload["reasoning_effort"] = effort
 
         try:
-            async with self._runtime.session.post(
+            async with post_with_effort_fallback(
+                self._runtime.session,
                 f"{MISTRAL_API_BASE}/chat/completions",
+                payload,
                 headers=self._runtime.headers,
-                json=payload,
                 timeout=aiohttp.ClientTimeout(total=90),
             ) as resp:
                 if resp.status == HTTPStatus.UNAUTHORIZED:
