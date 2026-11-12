@@ -38,17 +38,24 @@ WEB_SEARCH_MODE_MODEL = "model"
 WEB_SEARCH_MODE_ALWAYS = "always"
 WEB_SEARCH_MODES = [WEB_SEARCH_MODE_MODEL, WEB_SEARCH_MODE_ALWAYS]
 
-# Name and instructions of the server-side Mistral Agent that services web
-# searches. The instructions are deliberately STATIC and generic: the agent
-# object persists in the user's Mistral account, so the rendered HA system
-# prompt (which can include the exposed entity/area list) must never be used
-# here — that would store a snapshot of the home's layout with a third party.
-WEB_SEARCH_AGENT_NAME = "HA Mistral Web Search"
-WEB_SEARCH_AGENT_INSTRUCTIONS = (
-    "You are a web search assistant for a smart-home voice interface. Use web "
-    "search to answer the user's query, then reply factually and concisely in "
-    "the language of the query. Plain prose only, suitable for text-to-speech: "
-    "no markdown, no lists, no citations."
+# Instructions sent with every web-search request. There is no stored Mistral
+# agent: each search starts a Conversations request with the model, these
+# instructions and the web_search tool, so a wording change applies at once.
+# Deliberately generic — never the rendered HA system prompt, which can
+# contain the exposed entity/area list. They ask for a COMPLETE answer: the
+# result goes to the chat model, which shapes the final reply to the user's
+# own prompt; a one-line search summary leaves it nothing to work with (a
+# "news headlines" question came back as a single headline).
+WEB_SEARCH_INSTRUCTIONS = (
+    "You are the web-search helper of a smart-home voice assistant. Use web "
+    "search to answer the question, and give a complete, accurate answer that "
+    "can be read aloud. Include enough detail for a full answer: for news, the "
+    "top three to five headlines with one short sentence each and the outlet "
+    "they come from; for prices and markets, the figure, the change, the date "
+    "or time it applies to, and exactly what the figure measures (for example "
+    "an index level is not a fund's share price). Finish with a complete "
+    "sentence. Plain prose only: no markdown, lists, links or citations. Never "
+    "invent facts, figures or headlines."
 )
 
 # Cap on remembered HA-conversation → Mistral-conversation mappings (oldest

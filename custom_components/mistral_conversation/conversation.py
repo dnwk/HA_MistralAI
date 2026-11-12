@@ -63,9 +63,8 @@ from .const import (
     DOMAIN,
     MAX_TOOL_ITERATIONS,
     MISTRAL_API_BASE,
-    WEB_SEARCH_AGENT_INSTRUCTIONS,
-    WEB_SEARCH_AGENT_NAME,
     WEB_SEARCH_CONV_CACHE_MAX,
+    WEB_SEARCH_INSTRUCTIONS,
     WEB_SEARCH_MODE_ALWAYS,
     WEB_SEARCH_TOOL_NAME,
 )
@@ -217,6 +216,20 @@ def _web_search_tool_def() -> dict[str, Any]:
     }
 
 
+def _web_search_payload(model: str, user_text: str, language: str | None) -> dict[str, Any]:
+    """Body for starting a web-search conversation without a stored agent."""
+    instructions = WEB_SEARCH_INSTRUCTIONS
+    if language:
+        instructions += f" Reply in the language with code '{language}'."
+    return {
+        "model": model,
+        "inputs": user_text,
+        "instructions": instructions,
+        "tools": [{"type": "web_search"}],
+        "completion_args": {"temperature": 0.3, "top_p": 0.95},
+    }
+
+
 def _web_search_results_message(query: str, results: str) -> dict[str, Any]:
     """Build the synthetic user message carrying web-search results.
 
@@ -237,8 +250,9 @@ def _web_search_results_message(query: str, results: str) -> dict[str, Any]:
             "--- BEGIN WEB RESULTS ---\n"
             f"{results or 'No results were returned.'}\n"
             "--- END WEB RESULTS ---\n\n"
-            "Using these results, answer my original question directly. "
-            "Do not mention that you performed a search."
+            "Using these results, answer my original question fully, in the "
+            "length and style your instructions ask for, and finish with a "
+            "complete sentence. Do not mention that you performed a search."
         ),
     }
 
@@ -807,6 +821,7 @@ class MistralConversationEntity(ConversationEntity):
                         model=model,
                         user_text=search_text,
                         conv_id=chat_log.conversation_id,
+                        language=user_input.language,
                     )
                 except HomeAssistantError as err:
                     _LOGGER.debug(
@@ -894,6 +909,7 @@ class MistralConversationEntity(ConversationEntity):
                             model=model,
                             user_text=query,
                             conv_id=chat_log.conversation_id,
+                            language=user_input.language,
                         )
                     except HomeAssistantError as err:
                         _LOGGER.debug("Web search lookup failed: %s", err)
@@ -948,104 +964,30 @@ class MistralConversationEntity(ConversationEntity):
         return result
 
     # ------------------------------------------------------------------
-    # Agents / Conversations API for web search
+    # Conversations API for web search (no stored agent)
     # ------------------------------------------------------------------
-    async def _ensure_web_search_agent(self, model: str) -> str:
-        """Return the ID of the Mistral web-search Agent, creating it if needed.
-
-        The agent's instructions are the static WEB_SEARCH_AGENT_INSTRUCTIONS —
-        never the rendered HA system prompt, which can contain the exposed
-        entity/area list and would otherwise persist server-side in the user's
-        Mistral account. Before creating, existing agents are listed and one
-        matching our name and model is reused, so restarts don't accumulate a
-        new agent each time (the in-memory cache alone can't prevent that).
-        """
-        runtime = self._runtime
-        if runtime.web_search_agent_id:
-            return runtime.web_search_agent_id
-
-        if agent_id := await self._find_web_search_agent(model):
-            runtime.web_search_agent_id = agent_id
-            _LOGGER.debug("Reusing Mistral web-search agent: %s", agent_id)
-            return agent_id
-
-        payload = _sanitize({
-            "model": model,
-            "name": WEB_SEARCH_AGENT_NAME,
-            "description": "Home Assistant conversation agent with web search",
-            "instructions": WEB_SEARCH_AGENT_INSTRUCTIONS,
-            "tools": [{"type": "web_search"}],
-            "completion_args": {"temperature": 0.3, "top_p": 0.95},
-        })
-        async with runtime.session.post(
-            f"{MISTRAL_API_BASE}/agents",
-            headers=runtime.headers,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as resp:
-            if resp.status >= 400:
-                body = await resp.text()
-                raise HomeAssistantError(
-                    f"Failed to create Mistral web-search agent: {resp.status} {body}"
-                )
-            data = await resp.json()
-            agent_id = data["id"]
-            runtime.web_search_agent_id = agent_id
-            _LOGGER.debug("Created Mistral web-search agent: %s", agent_id)
-            return agent_id
-
-    async def _find_web_search_agent(self, model: str) -> str | None:
-        """Look up an already-created web-search agent on the account.
-
-        Matches on our agent name and the configured model (a model change
-        gets its own agent rather than silently reusing the old one). Any
-        failure returns None so the caller falls back to creating an agent —
-        reuse is an optimisation, never a requirement.
-        """
-        runtime = self._runtime
-        try:
-            async with runtime.session.get(
-                f"{MISTRAL_API_BASE}/agents",
-                params={"page": 0, "page_size": 100},
-                headers=runtime.headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status >= 400:
-                    _LOGGER.debug("Mistral agents list HTTP %s", resp.status)
-                    return None
-                data = await resp.json()
-        except aiohttp.ClientError as err:
-            _LOGGER.debug("Mistral agents list failed: %s", err)
-            return None
-
-        agents = data if isinstance(data, list) else data.get("data") or []
-        for item in agents:
-            if (
-                isinstance(item, dict)
-                and item.get("name") == WEB_SEARCH_AGENT_NAME
-                and item.get("model") == model
-                and item.get("id")
-            ):
-                return item["id"]
-        return None
-
     async def _conversations_chat(
         self,
         model: str,
         user_text: str,
         conv_id: str,
+        language: str | None = None,
     ) -> str:
-        """Use the Mistral Conversations API (beta) with web search."""
-        runtime = self._runtime
-        agent_id = await self._ensure_web_search_agent(model)
+        """Answer ``user_text`` with the Mistral Conversations API and web search.
 
+        A new search starts a conversation with the model, the generic
+        WEB_SEARCH_INSTRUCTIONS and the ``web_search`` tool in the request
+        itself; no agent is stored in the Mistral account. A follow-up in the
+        same HA conversation appends to the Mistral conversation started then.
+        """
+        runtime = self._runtime
         mistral_conv_id = runtime.web_search_conversations.get(conv_id)
         if mistral_conv_id:
             url = f"{MISTRAL_API_BASE}/conversations/{mistral_conv_id}"
             payload: dict[str, Any] = {"inputs": user_text}
         else:
             url = f"{MISTRAL_API_BASE}/conversations"
-            payload = {"agent_id": agent_id, "inputs": user_text}
+            payload = _web_search_payload(model, user_text, language)
 
         async with runtime.session.post(
             url,

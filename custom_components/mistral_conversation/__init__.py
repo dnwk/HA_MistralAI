@@ -27,8 +27,6 @@ class MistralRuntimeData:
 
     session: aiohttp.ClientSession
     headers: dict[str, str]
-    # Cached Mistral Agent ID for web-search conversations
-    web_search_agent_id: str | None = field(default=None)
     # HA conversation id → Mistral Conversations-API thread id. Bounded by
     # WEB_SEARCH_CONV_CACHE_MAX in _conversations_chat (oldest evicted first).
     web_search_conversations: dict[str, str] = field(default_factory=dict)
