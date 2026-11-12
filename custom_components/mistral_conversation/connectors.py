@@ -59,8 +59,15 @@ CONNECTOR_INSTRUCTIONS = (
     "You carry out a request from a smart-home voice assistant using the "
     "attached connector tools. Do what is asked, then reply with a short, "
     "factual summary of the result that can be read aloud. Plain prose only: "
-    "no markdown, lists or links."
+    "no markdown, lists or links in the summary. If the tool results include "
+    "source links (for example Google Maps links), end your reply with one "
+    "line per source you used, exactly in the form 'SOURCE: <title> | <url>', "
+    "copying the title and URL from the tool results unchanged."
 )
+
+# "SOURCE: title | url" lines the connector model is asked to append.
+_SOURCE_LINE = re.compile(r"^\s*SOURCE:\s*(?P<title>.*?)\s*\|\s*(?P<url>https?://\S+)\s*$", re.I)
+_MAX_SOURCES = 20
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,24 @@ class MistralConnector:
     title: str
     description: str
     tool_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConnectorSource:
+    """A source link a connector answer was based on."""
+
+    title: str
+    url: str
+
+
+@dataclass(frozen=True)
+class ConnectorResult:
+    """One serviced connector call."""
+
+    connector: MistralConnector
+    request: str
+    answer: str
+    sources: tuple[ConnectorSource, ...] = ()
 
 
 def _connector_from_item(item: Any) -> MistralConnector | None:
@@ -242,19 +267,31 @@ def connector_payload(
     }
 
 
-def connector_answer(data: Any) -> str:
-    """The text answer of a Conversations response.
+def _add_source(sources: list[ConnectorSource], title: Any, url: Any) -> None:
+    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+        return
+    if any(s.url == url for s in sources) or len(sources) >= _MAX_SOURCES:
+        return
+    text = title.strip() if isinstance(title, str) and title.strip() else url
+    sources.append(ConnectorSource(title=text, url=url))
 
-    ``message.output`` content is a string or a list of chunks; only text
-    chunks are used. A ``function.call`` waiting for confirmation (the
-    connector asks for human approval) can't be confirmed by voice, so it is
-    reported as such instead of being silently dropped.
+
+def connector_reply(data: Any) -> tuple[str, tuple[ConnectorSource, ...]]:
+    """The text answer of a Conversations response and its sources.
+
+    ``message.output`` content is a string or a list of chunks: text chunks
+    form the answer, ``tool_reference`` chunks (Mistral's citations) give
+    sources. ``SOURCE: title | url`` lines the connector model was asked to
+    append are moved from the answer to the sources. A ``function.call``
+    waiting for confirmation (the connector asks for human approval) can't be
+    confirmed by voice, so it is reported instead of being silently dropped.
     """
     if not isinstance(data, dict):
-        return ""
+        return "", ()
     outputs = data.get("outputs")
     parts: list[str] = []
     pending: list[str] = []
+    sources: list[ConnectorSource] = []
     for output in outputs if isinstance(outputs, list) else []:
         if not isinstance(output, dict):
             continue
@@ -268,19 +305,36 @@ def connector_answer(data: Any) -> str:
             parts.append(content)
         elif isinstance(content, list):
             for chunk in content:
-                if isinstance(chunk, dict) and chunk.get("type") == "text":
+                if not isinstance(chunk, dict):
+                    continue
+                if chunk.get("type") == "text":
                     parts.append(str(chunk.get("text", "")))
-    answer = "".join(parts).strip()
+                elif chunk.get("type") == "tool_reference":
+                    _add_source(sources, chunk.get("title"), chunk.get("url"))
+
+    kept_lines: list[str] = []
+    for line in "".join(parts).splitlines():
+        match = _SOURCE_LINE.match(line)
+        if match:
+            _add_source(sources, match.group("title"), match.group("url"))
+        else:
+            kept_lines.append(line)
+    answer = "\n".join(kept_lines).strip()
     if pending and not answer:
         answer = (
             "The connector wants confirmation before running "
             + ", ".join(pending)
             + ", which can't be given by voice. Nothing was done."
         )
-    return answer
+    return answer, tuple(sources)
 
 
-def connector_results_message(results: list[tuple[MistralConnector, str, str]]) -> dict[str, Any]:
+def connector_answer(data: Any) -> str:
+    """Just the text answer of a Conversations response (see connector_reply)."""
+    return connector_reply(data)[0]
+
+
+def connector_results_message(results: list[ConnectorResult]) -> dict[str, Any]:
     """Synthetic user message carrying connector results as untrusted data.
 
     Like web-search results, these come from external services (mail, files,
@@ -289,10 +343,10 @@ def connector_results_message(results: list[tuple[MistralConnector, str, str]]) 
     that reads them, which is the real boundary.
     """
     blocks = []
-    for connector, request, answer in results:
+    for result in results:
         blocks.append(
-            f"[{connector.title}] request: {request}\n"
-            f"result: {answer or 'No result was returned.'}"
+            f"[{result.connector.title}] request: {result.request}\n"
+            f"result: {result.answer or 'No result was returned.'}"
         )
     body = "\n\n".join(blocks)
     return {

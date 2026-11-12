@@ -23,15 +23,19 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
+from .connector_sources import ConnectorSourceRecord
 from .connectors import (
     CONNECTOR_CACHE_TTL,
     CONNECTOR_CALL_TIMEOUT,
     CONNECTOR_RETRY_DELAY,
     MAX_CONNECTOR_CALLS_PER_ROUND,
+    ConnectorResult,
+    ConnectorSource,
     MistralConnector,
     async_fetch_connectors,
-    connector_answer,
+    connector_reply,
     connector_payload,
     connector_results_message,
     connector_tools,
@@ -582,6 +586,8 @@ class MistralConversationEntity(ConversationEntity):
         self._connectors_read_ok = False
         self._connectors_failure_logged = False
         self._connectors_lock = asyncio.Lock()
+        # Visible record of connector answers and their sources.
+        self._source_record = ConnectorSourceRecord(hass, entry.entry_id)
 
     @property
     def _runtime(self):
@@ -627,7 +633,7 @@ class MistralConversationEntity(ConversationEntity):
         calls: list[tuple[MistralConnector, str]],
         model: str,
         language: str | None,
-    ) -> list[tuple[MistralConnector, str, str]]:
+    ) -> list[ConnectorResult]:
         """Run connector requests concurrently; a failure becomes a short note."""
         connector_model = (
             model
@@ -635,19 +641,41 @@ class MistralConversationEntity(ConversationEntity):
             else CONNECTOR_FALLBACK_MODEL
         )
 
-        async def run(connector: MistralConnector, request: str) -> tuple[MistralConnector, str, str]:
+        async def run(connector: MistralConnector, request: str) -> ConnectorResult:
             try:
-                answer = await self._async_connector_call(connector_model, connector, request, language)
+                answer, sources = await self._async_connector_call(
+                    connector_model, connector, request, language
+                )
             except HomeAssistantError as err:
                 _LOGGER.warning("Mistral connector %s failed: %s", connector.name, err)
-                answer = "The connector request failed, so no result is available."
-            return connector, request, answer
+                answer, sources = "The connector request failed, so no result is available.", ()
+            return ConnectorResult(connector, request, answer, sources)
 
         return list(await asyncio.gather(*(run(c, r) for c, r in calls)))
 
+    async def _async_record_sources(
+        self, user_input: ConversationInput, result: Any, connector_results: list[ConnectorResult]
+    ) -> None:
+        """Add the turn to the visible source record if any connector gave sources.
+
+        Never raises: a failure here must not break the reply.
+        """
+        if not any(r.sources for r in connector_results):
+            return
+        try:
+            reply = result.response.speech.get("plain", {}).get("speech", "")
+        except AttributeError:
+            reply = ""
+        try:
+            await self._source_record.async_add(
+                user_input.text, reply, connector_results, dt_util.now()
+            )
+        except Exception:  # noqa: BLE001 - the record is best effort
+            _LOGGER.exception("Could not record Mistral connector sources")
+
     async def _async_connector_call(
         self, model: str, connector: MistralConnector, request: str, language: str | None
-    ) -> str:
+    ) -> tuple[str, tuple[ConnectorSource, ...]]:
         """One stateless Conversations request with a single connector attached."""
         runtime = self._runtime
         _LOGGER.debug("Calling Mistral connector %s (model %s): %s", connector.name, model, request)
@@ -664,7 +692,7 @@ class MistralConversationEntity(ConversationEntity):
                 data = await resp.json()
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             raise HomeAssistantError(f"{type(err).__name__}: {err}") from err
-        return connector_answer(data)
+        return connector_reply(data)
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -805,6 +833,8 @@ class MistralConversationEntity(ConversationEntity):
         captured_searches: list[str] = []
         # (tool name, request) pairs for connector calls, captured likewise.
         captured_connectors: list[tuple[str, str]] = []
+        # Every connector result of this turn, for the source record.
+        turn_connector_results: list[ConnectorResult] = []
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             raw_payload: dict[str, Any] = {
@@ -884,6 +914,7 @@ class MistralConversationEntity(ConversationEntity):
                     connector_results = await self._async_run_connectors(
                         calls, model, user_input.language
                     )
+                    turn_connector_results.extend(connector_results)
                     injected.append(connector_results_message(connector_results))
 
                 # Withdraw ALL tools for the round that consumes the results —
@@ -903,6 +934,7 @@ class MistralConversationEntity(ConversationEntity):
                 break
 
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
+        await self._async_record_sources(user_input, result, turn_connector_results)
 
         if continue_conversation_enabled:
             reply_text = result.response.speech.get("plain", {}).get("speech", "")

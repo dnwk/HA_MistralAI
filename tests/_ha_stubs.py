@@ -54,6 +54,7 @@ _PATHS = [
     "homeassistant", "homeassistant.components",
     "homeassistant.components.ai_task",
     "homeassistant.components.conversation",
+    "homeassistant.components.persistent_notification",
     "homeassistant.components.stt",
     "homeassistant.components.tts",
     "homeassistant.config_entries", "homeassistant.const", "homeassistant.core",
@@ -63,7 +64,9 @@ _PATHS = [
     "homeassistant.helpers.device_registry",
     "homeassistant.helpers.entity_platform",
     "homeassistant.helpers.intent", "homeassistant.helpers.llm",
-    "homeassistant.helpers.selector", "homeassistant.helpers.typing",
+    "homeassistant.helpers.selector", "homeassistant.helpers.storage",
+    "homeassistant.helpers.typing",
+    "homeassistant.util", "homeassistant.util.dt",
 ]
 for _p in _PATHS:
     if _p not in sys.modules:
@@ -167,11 +170,14 @@ _HIERARCHY = {
         "components", "config_entries", "const", "core",
         "data_entry_flow", "exceptions", "helpers",
     ],
-    "homeassistant.components": ["ai_task", "conversation", "stt", "tts"],
+    "homeassistant.components": [
+        "ai_task", "conversation", "persistent_notification", "stt", "tts",
+    ],
     "homeassistant.helpers": [
         "aiohttp_client", "config_validation", "device_registry",
-        "entity_platform", "intent", "llm", "selector", "typing",
+        "entity_platform", "intent", "llm", "selector", "storage", "typing",
     ],
+    "homeassistant.util": ["dt"],
 }
 for _parent, _children in _HIERARCHY.items():
     _parent_mod = sys.modules[_parent]
