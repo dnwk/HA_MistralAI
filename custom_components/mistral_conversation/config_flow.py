@@ -31,6 +31,8 @@ from .const import (
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_MODE,
     CONF_WEB_SEARCH_TRIGGER,
+    CONF_CONNECTORS,
+    DEFAULT_CONNECTORS,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
@@ -354,6 +356,11 @@ class MistralOptionsFlow(config_entries.OptionsFlow):
                             CONF_WEB_SEARCH_TRIGGER, DEFAULT_WEB_SEARCH_TRIGGER
                         ),
                     ): selector.TextSelector(),
+                    # ── Mistral connectors (MCP servers in the account) ───
+                    vol.Optional(
+                        CONF_CONNECTORS,
+                        default=opts.get(CONF_CONNECTORS, DEFAULT_CONNECTORS),
+                    ): selector.BooleanSelector(),
                     # ── Speech-to-text model ──────────────────────────────
                     vol.Optional(
                         CONF_STT_MODEL,

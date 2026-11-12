@@ -1,9 +1,11 @@
 """Conversation platform for Mistral AI."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Collection
 from typing import Any, Literal
 
 import aiohttp
@@ -22,8 +24,21 @@ from homeassistant.helpers import intent, llm
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .connectors import (
+    CONNECTOR_CACHE_TTL,
+    CONNECTOR_CALL_TIMEOUT,
+    CONNECTOR_RETRY_DELAY,
+    MAX_CONNECTOR_CALLS_PER_ROUND,
+    MistralConnector,
+    async_fetch_connectors,
+    connector_answer,
+    connector_payload,
+    connector_results_message,
+    connector_tools,
+)
 from .const import (
     AGENT_CAPABLE_MODELS,
+    CONF_CONNECTORS,
     CONF_CONTINUE_CONVERSATION,
     CONF_MAX_TOKENS,
     CONF_MODEL,
@@ -32,6 +47,8 @@ from .const import (
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_MODE,
     CONF_WEB_SEARCH_TRIGGER,
+    CONNECTOR_FALLBACK_MODEL,
+    DEFAULT_CONNECTORS,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
@@ -507,6 +524,41 @@ async def _filter_intercepted_tool(
             yield {**delta, "tool_calls": kept}
 
 
+async def _filter_connector_calls(
+    stream: AsyncGenerator[dict[str, Any], None],
+    tool_names: Collection[str],
+    collected: list[tuple[str, str]],
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Strip connector tool calls from a delta stream, collecting them.
+
+    Same idea as ``_filter_intercepted_tool``: connector tools are serviced
+    by us through the Conversations API and are not part of HA's LLM API, so
+    chat_log must never see them. Each call's ``request`` argument is
+    collected as ``(tool_name, request)``; a call without one is dropped.
+    """
+    async for delta in stream:
+        tool_calls = delta.get("tool_calls")
+        if not tool_calls:
+            yield delta
+            continue
+
+        kept = []
+        for tc in tool_calls:
+            name = getattr(tc, "tool_name", None)
+            if name not in tool_names:
+                kept.append(tc)
+                continue
+            args = getattr(tc, "tool_args", None) or {}
+            request = args.get("request") if isinstance(args, dict) else None
+            if isinstance(request, str) and request.strip():
+                collected.append((name, request.strip()))
+            else:
+                _LOGGER.debug("Ignoring %s call without a usable request", name)
+
+        if kept:
+            yield {**delta, "tool_calls": kept}
+
+
 # ---------------------------------------------------------------------------
 # Entity
 # ---------------------------------------------------------------------------
@@ -524,10 +576,95 @@ class MistralConversationEntity(ConversationEntity):
         self._attr_unique_id = f"{entry.entry_id}_conversation"
         if entry.options.get(CONF_LLM_HASS_API):
             self._attr_supported_features = ConversationEntityFeature.CONTROL
+        # Connector list cache (see _async_connectors).
+        self._connectors: list[MistralConnector] = []
+        self._connectors_read_at: float | None = None
+        self._connectors_read_ok = False
+        self._connectors_failure_logged = False
+        self._connectors_lock = asyncio.Lock()
 
     @property
     def _runtime(self):
         return self.hass.data[DOMAIN][self._entry.entry_id]
+
+    async def _async_connectors(self) -> list[MistralConnector]:
+        """The account's usable connectors, cached for CONNECTOR_CACHE_TTL.
+
+        Read on the first turn and then at most every 10 minutes (every
+        minute after a failed read, keeping the last good list meanwhile), so
+        a connector added in Mistral appears without a restart. Returns an
+        empty list when the option is off.
+        """
+        if not self._entry.options.get(CONF_CONNECTORS, DEFAULT_CONNECTORS):
+            return []
+        async with self._connectors_lock:
+            now = time.monotonic()
+            max_age = CONNECTOR_CACHE_TTL if self._connectors_read_ok else CONNECTOR_RETRY_DELAY
+            if self._connectors_read_at is not None and now - self._connectors_read_at < max_age:
+                return self._connectors
+            runtime = self._runtime
+            fetched = await async_fetch_connectors(runtime.session, runtime.headers)
+            self._connectors_read_at = time.monotonic()
+            self._connectors_read_ok = fetched is not None
+            if fetched is None:
+                log = _LOGGER.debug if self._connectors_failure_logged else _LOGGER.warning
+                log(
+                    "Could not read the Mistral connector list; connectors are "
+                    "not offered until it can be read (retrying in %ss)",
+                    CONNECTOR_RETRY_DELAY,
+                )
+                self._connectors_failure_logged = True
+            else:
+                self._connectors = fetched
+                _LOGGER.debug(
+                    "Mistral connectors available: %s",
+                    ", ".join(c.name for c in fetched) or "none",
+                )
+            return self._connectors
+
+    async def _async_run_connectors(
+        self,
+        calls: list[tuple[MistralConnector, str]],
+        model: str,
+        language: str | None,
+    ) -> list[tuple[MistralConnector, str, str]]:
+        """Run connector requests concurrently; a failure becomes a short note."""
+        connector_model = (
+            model
+            if any(model.startswith(m) for m in AGENT_CAPABLE_MODELS)
+            else CONNECTOR_FALLBACK_MODEL
+        )
+
+        async def run(connector: MistralConnector, request: str) -> tuple[MistralConnector, str, str]:
+            try:
+                answer = await self._async_connector_call(connector_model, connector, request, language)
+            except HomeAssistantError as err:
+                _LOGGER.warning("Mistral connector %s failed: %s", connector.name, err)
+                answer = "The connector request failed, so no result is available."
+            return connector, request, answer
+
+        return list(await asyncio.gather(*(run(c, r) for c, r in calls)))
+
+    async def _async_connector_call(
+        self, model: str, connector: MistralConnector, request: str, language: str | None
+    ) -> str:
+        """One stateless Conversations request with a single connector attached."""
+        runtime = self._runtime
+        _LOGGER.debug("Calling Mistral connector %s (model %s): %s", connector.name, model, request)
+        try:
+            async with runtime.session.post(
+                f"{MISTRAL_API_BASE}/conversations",
+                headers=runtime.headers,
+                json=_sanitize(connector_payload(model, connector, request, language)),
+                timeout=aiohttp.ClientTimeout(total=CONNECTOR_CALL_TIMEOUT),
+            ) as resp:
+                if resp.status >= 400:
+                    body = await resp.text()
+                    raise HomeAssistantError(f"HTTP {resp.status}: {body[:300]}")
+                data = await resp.json()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise HomeAssistantError(f"{type(err).__name__}: {err}") from err
+        return connector_answer(data)
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -608,6 +745,18 @@ class MistralConversationEntity(ConversationEntity):
         if offer_web_search_tool:
             tools = (tools or []) + [_web_search_tool_def()]
 
+        # --- Mistral connectors -------------------------------------------
+        # Every usable connector in the Mistral account is offered as its own
+        # function; a call is serviced through the Conversations API (see
+        # connectors.py). Names already used by other tools are reserved so a
+        # connector can never shadow a Home Assistant tool.
+        connector_map: dict[str, MistralConnector] = {}
+        connectors = await self._async_connectors()
+        if connectors:
+            reserved = {t["function"]["name"] for t in tools or [] if "function" in t}
+            connector_defs, connector_map = connector_tools(connectors, reserved)
+            tools = (tools or []) + connector_defs
+
         # --- Direct web search path: Agents/Conversations API -------------
         # Used when a trigger phrase matched, or in legacy "always" mode. This
         # path carries no HA tools, so device control cannot happen on it.
@@ -654,6 +803,8 @@ class MistralConversationEntity(ConversationEntity):
         injected: list[dict[str, Any]] = []
         # Queries the model asked us to search for, captured from the stream.
         captured_searches: list[str] = []
+        # (tool name, request) pairs for connector calls, captured likewise.
+        captured_connectors: list[tuple[str, str]] = []
 
         for _iteration in range(MAX_TOOL_ITERATIONS):
             raw_payload: dict[str, Any] = {
@@ -679,6 +830,7 @@ class MistralConversationEntity(ConversationEntity):
             payload: dict[str, Any] = _sanitize(raw_payload)
 
             captured_searches.clear()
+            captured_connectors.clear()
             try:
                 await self._stream_and_collect(
                     payload,
@@ -688,6 +840,8 @@ class MistralConversationEntity(ConversationEntity):
                         WEB_SEARCH_TOOL_NAME if offer_web_search_tool else None
                     ),
                     intercepted=captured_searches,
+                    connector_names=connector_map.keys(),
+                    connector_calls=captured_connectors,
                 )
             except HomeAssistantError:
                 raise
@@ -697,33 +851,52 @@ class MistralConversationEntity(ConversationEntity):
                     f"Unexpected error talking to Mistral: {err}"
                 ) from err
 
-            # The model asked for a web search: service it against the Agents
-            # API and hand the result back on the next round. Checked before
+            # The model asked for a web search and/or connectors: service them
+            # and hand the results back on the next round. Checked before
             # unresponded_tool_results, because an intercepted call leaves no
             # pending tool result behind.
-            if captured_searches:
-                query = captured_searches[0]
-                _LOGGER.debug("Model requested web search: %s", query)
-                try:
-                    results = await self._conversations_chat(
-                        model=model,
-                        user_text=query,
-                        conv_id=chat_log.conversation_id,
-                    )
-                except HomeAssistantError as err:
-                    _LOGGER.debug("Web search lookup failed: %s", err)
-                    results = ""
+            if captured_searches or captured_connectors:
+                if captured_searches:
+                    query = captured_searches[0]
+                    _LOGGER.debug("Model requested web search: %s", query)
+                    try:
+                        results = await self._conversations_chat(
+                            model=model,
+                            user_text=query,
+                            conv_id=chat_log.conversation_id,
+                        )
+                    except HomeAssistantError as err:
+                        _LOGGER.debug("Web search lookup failed: %s", err)
+                        results = ""
+                    injected.append(_web_search_results_message(query, results))
 
-                injected.append(_web_search_results_message(query, results))
+                if captured_connectors:
+                    calls = [
+                        (connector_map[name], request)
+                        for name, request in captured_connectors[:MAX_CONNECTOR_CALLS_PER_ROUND]
+                    ]
+                    if len(captured_connectors) > MAX_CONNECTOR_CALLS_PER_ROUND:
+                        _LOGGER.debug(
+                            "Model asked for %d connector calls; running the first %d",
+                            len(captured_connectors),
+                            MAX_CONNECTOR_CALLS_PER_ROUND,
+                        )
+                    connector_results = await self._async_run_connectors(
+                        calls, model, user_input.language
+                    )
+                    injected.append(connector_results_message(connector_results))
+
                 # Withdraw ALL tools for the round that consumes the results —
-                # not just web_search. The results are untrusted web content;
-                # with HA tools still attached, a page embedding instructions
-                # ("turn off the alarm") could steer a device-control call.
-                # Device control already had its chance on the round that chose
-                # to search, and dropping web_search also caps a turn at one
-                # search so it cannot loop.
+                # not just web_search and the connectors. The results are
+                # untrusted external content (web pages, mail, files); with HA
+                # tools still attached, text embedding instructions ("turn off
+                # the alarm") could steer a device-control call. Device control
+                # already had its chance on the round that chose to search, and
+                # dropping these tools also caps a turn at one round of lookups
+                # so it cannot loop.
                 tools = None
                 offer_web_search_tool = False
+                connector_map = {}
                 continue
 
             if not chat_log.unresponded_tool_results:
@@ -888,13 +1061,16 @@ class MistralConversationEntity(ConversationEntity):
         user_input: ConversationInput,
         intercept_tool: str | None = None,
         intercepted: list[str] | None = None,
+        connector_names: Collection[str] = (),
+        connector_calls: list[tuple[str, str]] | None = None,
     ) -> None:
         """POST to Mistral, stream deltas into chat_log.
 
         When ``intercept_tool`` is set, calls to that tool are removed from the
         delta stream before chat_log sees them and their ``query`` argument is
-        appended to ``intercepted``. HA would otherwise try to execute a tool
-        that isn't in its LLM API and raise.
+        appended to ``intercepted``. Calls to any of ``connector_names`` are
+        removed the same way and collected into ``connector_calls``. HA would
+        otherwise try to execute a tool that isn't in its LLM API and raise.
         """
         runtime = self._runtime
         try:
@@ -922,6 +1098,12 @@ class MistralConversationEntity(ConversationEntity):
                 if intercept_tool is not None:
                     stream = _filter_intercepted_tool(
                         stream, intercept_tool, intercepted if intercepted is not None else []
+                    )
+                if connector_names:
+                    stream = _filter_connector_calls(
+                        stream,
+                        set(connector_names),
+                        connector_calls if connector_calls is not None else [],
                     )
 
                 async for _content in chat_log.async_add_delta_content_stream(

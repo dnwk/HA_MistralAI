@@ -13,6 +13,7 @@ CONF_CONTINUE_CONVERSATION = "continue_conversation"
 CONF_WEB_SEARCH = "web_search"
 CONF_WEB_SEARCH_MODE = "web_search_mode"
 CONF_WEB_SEARCH_TRIGGER = "web_search_trigger"
+CONF_CONNECTORS = "mistral_connectors"
 CONF_STT_LANGUAGE = "stt_language"
 CONF_STT_MODEL = "stt_model"
 CONF_TTS_MODEL = "tts_model"
@@ -78,6 +79,9 @@ DEFAULT_WEB_SEARCH_MODE = WEB_SEARCH_MODE_MODEL
 # default) leaves routing to `web_search_mode`. Opt-in by design — trigger
 # phrases are language-specific, so shipping a list would only fit some users.
 DEFAULT_WEB_SEARCH_TRIGGER = ""
+# Offer the connectors (MCP servers) registered in the Mistral account as
+# tools. On by default: nothing changes when the account has none.
+DEFAULT_CONNECTORS = True
 DEFAULT_STT_LANGUAGE = ""  # empty = Voxtral auto-detect
 DEFAULT_TTS_VOICE = "en_paul_neutral"
 DEFAULT_TTS_MODE = TTS_MODE_STREAM
@@ -134,6 +138,12 @@ AGENT_CAPABLE_MODELS = [
     "mistral-medium-latest",
     "mistral-large-latest",
 ]
+
+# Connector calls run on the Conversations API. If the chat model is not one of
+# AGENT_CAPABLE_MODELS (e.g. Ministral), they run on this model instead, so
+# connectors are available whatever chat model is chosen. Mistral's connector
+# docs use mistral-small/medium/large in every example.
+CONNECTOR_FALLBACK_MODEL = "mistral-small-latest"
 
 # ---------------------------------------------------------------------------
 # STT

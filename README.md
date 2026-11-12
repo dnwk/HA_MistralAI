@@ -31,6 +31,7 @@
    - [System prompt](#system-prompt)
    - [Continue conversation (Experimental)](#continue-conversation-experimental)
    - [Web search (Beta)](#web-search-beta)
+   - [Mistral connectors](#mistral-connectors)
 7. [Controlling devices](#controlling-devices)
 8. [Using as a service action](#using-as-a-service-action)
 9. [Speech recognition (STT)](#speech-recognition-stt)
@@ -68,6 +69,7 @@ This integration makes **Mistral AI** available as a fully-featured conversation
 | Multilingual | ✅ | Responds in the user's language |
 | Continue conversation | ✅ | Keeps microphone open after questions (Experimental) |
 | Web search | ✅ | Model-decided web search via the Agents API, or trigger phrases (Beta) |
+| Mistral connectors | ✅ | The connectors (MCP servers) in your Mistral account are available to the assistant |
 | Separate devices | ✅ | Conversation, STT and TTS appear as separate HA devices |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -150,6 +152,7 @@ Click the integration → **Configure** to change settings.
 | **Web search** | Off | Allow the AI to search the web (Beta) |
 | **Web search routing** | `Let the model decide` | How web search is triggered — see below |
 | **Web search trigger phrases** | *(empty)* | Optional phrases that force a web search — see below |
+| **Use my Mistral connectors** | On | Offer the connectors in your Mistral account as tools — see [Mistral connectors](#mistral-connectors) |
 | **Speech-to-text model** | `voxtral-mini-latest` | Voxtral transcription model — dropdown lists the Voxtral speech models on your account; any model ID can also be typed |
 | **Text-to-speech model** | `voxtral-mini-tts-latest` | Voxtral TTS model — dropdown lists the TTS models on your account; any model ID can also be typed |
 | **STT language** | Auto-detect | Language for Voxtral transcription |
@@ -245,6 +248,27 @@ users might use `zoek op, zoek online, google`; German users `suche, google`.
 > Note: with trigger phrases set, a matching turn goes straight to the Agents API
 > and so cannot control devices — that is the same trade-off as **Always search**,
 > just limited to utterances you opt into.
+
+### Mistral connectors
+
+A *connector* is an MCP server registered in your Mistral account (in Mistral Studio or through Mistral's Connectors API) — for example a calendar, mail, wiki or your own MCP server. With **Use my Mistral connectors** on (the default), every usable connector in the account is offered to the assistant as a tool, so you can ask things like "what's on my calendar today?" by voice.
+
+How it works:
+
+1. The integration reads your connector list (`GET /v1/connectors`) on the first conversation turn and then every 10 minutes, so a newly added connector shows up without a restart. Connectors that are not connected/authenticated or are blocked are skipped.
+2. Each connector becomes a tool named `connector_<name>`, described with the connector's title, description and tool names. The model decides when to use it, like web search.
+3. When it does, the integration sends your request to Mistral's Conversations API with that connector attached (`store: false`). **Mistral runs the connector's tools** and returns an answer; nothing runs inside Home Assistant.
+4. The answer goes back to the model as untrusted data, and all tools are withdrawn for the rest of that turn (the same rule as web search), so text inside a mail or document cannot trigger a device action.
+
+Requirements and limits:
+
+- **Which connectors are visible** depends on your API key's *Connector access* scope. The default scope only covers connectors shared with your workspace; to use your **private** connectors, create the key with the *Private and shared connectors* scope.
+- **Connect OAuth connectors in Mistral Studio first.** Mistral's API cannot pass OAuth tokens, so a connector that needs a login must be connected there.
+- **Chat model:** connectors run on the Conversations API. If your chat model is Mistral Small, Medium or Large, it runs the connector too; with a Ministral model, connector requests run on `mistral-small-latest` instead, so connectors work whichever chat model you pick.
+- **Actions happen without a confirmation step.** A connector that can act (send a message, create an event) does so when the assistant asks it to; confirmation prompts can't be answered by voice. Only connect services you are happy to use by voice, and turn the option off if needed.
+- Up to 3 connector calls are run per model round; each may take up to 60 s.
+- Connectors are in Mistral's Public Preview, so the API may change.
+- Connectors you set up in Le Chat appear only if Mistral's API lists them for your key; Mistral's docs describe Studio/API connectors.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -489,6 +513,8 @@ Decisions behind recent changes, and why they were made.
 - **Speech style uses Mistral's tags, and is off until you set it.** Mistral's speech API has no speed, pitch or volume fields, so pace and emotion are sent as inline tags (`[emotion=calm][pace=slow]`) and expressiveness as a request field. Every control defaults to *not set* and sends nothing — "Default" is not even stored. Pace and emotion tags are additionally only sent when the TTS model ID names Voxtral TTS 3 or later (`…-tts-3`, `…-tts-3-0`): older models speak the tags as text, as `voxtral-mini-tts-latest` did on a live install ("pace equals fast"). An alias like `-latest` or a dated ID like `-tts-2603` doesn't reveal the version, so it is treated as not supporting tags; the rule accepts only one- or two-digit versions so that a date is never mistaken for one. When tags are left out, the log says so once per TTS entity. `expressiveness` appears in Mistral's TTS guide but not in its API reference, which is another reason it is only sent when set. Only the values Mistral documents are sent: an unknown tag is accepted by the API but does nothing, so typos are logged and dropped instead. Each streamed sentence is its own request, so the tags are added to every sentence. Pitch is not offered: Mistral has no field for it and changing it locally would need real signal processing. The style is returned in the TTS entity's default options so Home Assistant's TTS cache does not replay audio made with an old setting, and `tts.speak` can override each control per call.
 - **Volume is the one thing processed locally, and only upward.** A too-quiet voice can't be fixed from the media player without making everything else too loud, so the *Volume boost* scales the 16-bit PCM inside Home Assistant (standard library only, no `audioop` or numpy). It only boosts (0 to +12 dB): turning speech down is what the media player volume already does well. It uses a static soft clipper rather than a leveller — simple and never hard-clipping, but loud parts get squashed at high settings; at +12 dB everything above about half of full volume reaches the maximum, so +3 to +6 dB is the recommended range. The boost needs raw audio, so `tts.speak` returns WAV instead of MP3 while it is on. The 65,536-entry lookup table is built in an executor, not on the event loop. It is part of the same default options as the speech style, so changing it refreshes cached audio and `volume_boost` can be overridden per call.
 - **Web search results are treated as untrusted.** On the round where the model reads search results, every tool is withdrawn, not just web search, so instructions hidden in a web page cannot trigger a device action. Device control still works on the round where the model decides to search.
+- **Mistral connectors are offered as tools, run by Mistral, and treated like web search.** Home Assistant's chat-completions call can't take connectors (Mistral only supports them on its Conversations and Agents APIs), and rewriting every turn onto the Conversations API would mean a new streaming and tool-call loop. So, like web search, each connector is a synthetic function on the normal turn, and a call is serviced by a separate stateless Conversations request (`store: false`, no stored agent) with only that connector attached; Mistral executes the MCP tools server-side. Decisions taken with it: **all** usable connectors on the account are offered and the option is **on by default**, because the goal is that every connector you set up is available by voice — nothing changes on an account without connectors; connectors reported as not authenticated or blocked are skipped, and ones with unknown status are offered; one tool per connector (named `connector_<name>`, never shadowing a Home Assistant tool) so the model can pick by description; the connector request gets fixed, generic instructions and only the request text the model wrote — no entity list or system prompt; results are fenced as untrusted and all tools are withdrawn for the rest of the turn, so a mail or document can't steer device control; a Ministral chat model hands connector calls to `mistral-small-latest`, because Mistral documents connectors only with its Small/Medium/Large models; no confirmation step, because it can't be answered by voice — a pending confirmation is reported as "nothing was done"; the list is cached for 10 minutes (1 minute after a failed read, keeping the last good list) to avoid a request on every turn.
+- **Your Mistral API key is never handled outside Home Assistant.** Testing against a live account is done in Home Assistant itself or with a script that reads the key from your own terminal; the key is not pasted into chats or files.
 - **No household data in the web-search agent.** The web-search agent is stored in your Mistral account, so it gets fixed, generic instructions and never your rendered system prompt (which can contain your exposed entities and areas). An existing agent with the same name and model is reused instead of creating a new one on every restart.
 - **Upstream changes are ported selectively.** This fork is based on [SnarfNL/HA_MistralAI](https://github.com/SnarfNL/HA_MistralAI) and takes individual changes rather than merging it wholesale. Each ported change is marked *ported from upstream* in the release notes. Taken so far: the Home Assistant 2026.9 tool-schema fix (including AI Task `multiple` fields), the streaming-TTS WAV header fix, the chat model list update, and the volume boost. The volume boost was taken while it was still a draft upstream because it answered a real need here (Mistral's voice being too quiet); this fork added the TTS cache key, the per-call override and building the lookup table off the event loop. Not taken: upstream's removal of the *Text-to-speech voice* option (kept here as the searchable fallback voice) and its pinned `voxtral-mini-tts-2603` TTS model (this fork uses `voxtral-mini-tts-latest`). Upstream's tests depend on its real-Home-Assistant test setup, so ported changes get tests written for this fork's own test stubs.
 
@@ -499,6 +525,7 @@ Decisions behind recent changes, and why they were made.
 ## Release Notes
 
 ### Unreleased
+- **Added:** *Use my Mistral connectors* (on by default). Every usable connector (MCP server) registered in your Mistral account is offered to the assistant as a tool; when the model uses one, the request runs through Mistral's Conversations API with that connector attached (`store: false`) and Mistral executes it. Results are treated as untrusted and all tools are withdrawn for the rest of that turn. The connector list (`GET /v1/connectors`) is cached for 10 minutes; unauthenticated or blocked connectors are skipped. With a Ministral chat model, connector requests run on `mistral-small-latest`. Private connectors need an API key with the *Private and shared connectors* scope; OAuth connectors must be connected in Mistral Studio. Connectors are in Mistral's Public Preview.
 - **Fixed:** with *Speaking pace* or *Emotion* set, TTS models that don't understand Mistral's speech tags read them aloud ("pace equals fast" with `voxtral-mini-tts-latest`). The tags are now only sent when the *Text-to-speech model* is Voxtral TTS 3 or later (such as `voxtral-mini-tts-3-0`); otherwise they are left out with one warning in the log. Expressiveness and the volume boost are unaffected.
 - **Added:** *Volume boost* option for text-to-speech (0 to +12 dB, default 0 = unchanged). Mistral has no volume setting, so the integration scales the 16-bit PCM itself with a soft limiter, both for streamed Voice Assistant replies and for `tts.speak` (which then returns WAV instead of MP3). `tts.speak` can override it with the `volume_boost` option, and the setting is part of Home Assistant's TTS cache key, so changing it doesn't replay cached audio at the old volume. +3 to +6 dB stays clean; higher values squash loud parts. *Ported from upstream (draft at the time); the per-call option and cache handling are additions.*
 - **Added:** *Speaking pace*, *Emotion* and *Expressiveness* options for text-to-speech. Pace (very slow … very fast) and emotion (34 values such as calm, warm, happy) are sent as Mistral's inline `[pace=…]` / `[emotion=…]` tags, expressiveness (1.0–5.0) as a request field. All are off by default, apply to Voice Assistant replies and `tts.speak`, and can be overridden per call with the `pace`, `emotion` and `expressiveness` options. Mistral offers no speed, pitch or volume setting. Mistral documents the tags for Voxtral TTS 3; with an older TTS model a tag may be read aloud.
