@@ -206,7 +206,10 @@ def _web_search_tool_def() -> dict[str, Any]:
                         "type": "string",
                         "description": (
                             "The search query. Make it self-contained — resolve any "
-                            "pronouns or context from the conversation first."
+                            "pronouns or context from the conversation first. Do "
+                            "not add today's date to the query unless the user asked "
+                            "about a specific date; for current news write e.g. "
+                            "'latest news headlines'."
                         ),
                     }
                 },
@@ -912,8 +915,10 @@ class MistralConversationEntity(ConversationEntity):
                             language=user_input.language,
                         )
                     except HomeAssistantError as err:
-                        _LOGGER.debug("Web search lookup failed: %s", err)
+                        _LOGGER.warning("Mistral web search failed: %s", err)
                         results = ""
+                    if not results:
+                        _LOGGER.warning("Mistral web search returned no answer for: %s", query)
                     injected.append(_web_search_results_message(query, results))
 
                 if captured_connectors:
@@ -1023,7 +1028,14 @@ class MistralConversationEntity(ConversationEntity):
                 for chunk in content:
                     if isinstance(chunk, dict) and chunk.get("type") == "text":
                         parts.append(chunk.get("text", ""))
-        return "".join(parts).strip() or data.get("message", "")
+        answer = "".join(parts).strip() or str(data.get("message") or "")
+        _LOGGER.debug(
+            "Mistral web search answer (%d chars, entries %s): %s",
+            len(answer),
+            [o.get("type") for o in data.get("outputs", []) if isinstance(o, dict)],
+            answer[:400],
+        )
+        return answer
 
     # ------------------------------------------------------------------
     # Streaming HTTP + chat_log delta integration

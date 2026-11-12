@@ -52,6 +52,8 @@ def _wav_header(sample_rate: int = 24000, channels: int = 1, bits: int = 16) -> 
 HEADER = _wav_header()
 PCM = [b"\x11" * 100, b"\x22" * 100, b"\x33" * 100]
 SILENCE = bytes(TTS_INTER_SENTENCE_SILENCE_BYTES)
+# Every streamed answer ends with 500 ms of silence (24 kHz, 16-bit, mono).
+TRAILING = bytes(24000 * 2 // 2)
 TEXTS = ["First sentence here.", "Second sentence here.", "Third sentence here."]
 
 
@@ -101,32 +103,32 @@ class PipelinedStreamTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_normal_three_sentences(self) -> None:
         out = await self._run({t: ("ok", p) for t, p in zip(TEXTS, PCM)})
-        self.assertEqual(out, HEADER + PCM[0] + SILENCE + PCM[1] + SILENCE + PCM[2])
+        self.assertEqual(out, HEADER + PCM[0] + SILENCE + PCM[1] + SILENCE + PCM[2] + TRAILING)
 
     async def test_first_sentence_fails(self) -> None:
         out = await self._run(
             {TEXTS[0]: ("fail",), TEXTS[1]: ("ok", PCM[1]), TEXTS[2]: ("ok", PCM[2])}
         )
         self.assertTrue(out.startswith(b"RIFF"))
-        self.assertEqual(out, HEADER + PCM[1] + SILENCE + PCM[2])
+        self.assertEqual(out, HEADER + PCM[1] + SILENCE + PCM[2] + TRAILING)
 
     async def test_middle_sentence_fails_no_double_silence(self) -> None:
         out = await self._run(
             {TEXTS[0]: ("ok", PCM[0]), TEXTS[1]: ("fail",), TEXTS[2]: ("ok", PCM[2])}
         )
-        self.assertEqual(out, HEADER + PCM[0] + SILENCE + PCM[2])
+        self.assertEqual(out, HEADER + PCM[0] + SILENCE + PCM[2] + TRAILING)
 
     async def test_last_sentence_fails_no_trailing_silence(self) -> None:
         out = await self._run(
             {TEXTS[0]: ("ok", PCM[0]), TEXTS[1]: ("ok", PCM[1]), TEXTS[2]: ("fail",)}
         )
-        self.assertEqual(out, HEADER + PCM[0] + SILENCE + PCM[1])
+        self.assertEqual(out, HEADER + PCM[0] + SILENCE + PCM[1] + TRAILING)
 
     async def test_sentence_with_header_but_no_audio_is_skipped(self) -> None:
         out = await self._run(
             {TEXTS[0]: ("header_only",), TEXTS[1]: ("ok", PCM[1]), TEXTS[2]: ("ok", PCM[2])}
         )
-        self.assertEqual(out, HEADER + PCM[1] + SILENCE + PCM[2])
+        self.assertEqual(out, HEADER + PCM[1] + SILENCE + PCM[2] + TRAILING)
 
     async def test_all_sentences_fail_raises(self) -> None:
         with self.assertRaises(HomeAssistantError) as ctx:
@@ -155,7 +157,8 @@ class PipelinedStreamTests(unittest.IsolatedAsyncioTestCase):
         entity._stream_one_sentence_into = fake
         out = await _collect(entity, TEXTS[0], TEXTS[1])
         # 300 ms at 16 kHz, mono, 16-bit = 4800 samples * 2 bytes.
-        self.assertEqual(out, header_16k + PCM[0] + bytes(9600) + PCM[1])
+        # 300 ms between sentences and 500 ms at the end, both at 16 kHz.
+        self.assertEqual(out, header_16k + PCM[0] + bytes(9600) + PCM[1] + bytes(16000))
 
 
 class SilenceForHeaderTests(unittest.TestCase):
@@ -165,6 +168,12 @@ class SilenceForHeaderTests(unittest.TestCase):
     def test_stereo_44k(self) -> None:
         header = _wav_header(sample_rate=44100, channels=2, bits=16)
         self.assertEqual(len(tts_module._silence_for_header(header)), 13230 * 4)
+
+    def test_trailing_silence_length(self) -> None:
+        self.assertEqual(len(tts_module._silence_for_header(HEADER, 500)), 24000)
+        header = _wav_header(sample_rate=44100, channels=2, bits=16)
+        self.assertEqual(len(tts_module._silence_for_header(header, 500)), 44100 * 4 // 2)
+        self.assertEqual(len(tts_module._silence_for_header(b"junk", 500)), 24000)
 
     def test_unparsable_header_falls_back_to_constant(self) -> None:
         self.assertEqual(tts_module._silence_for_header(b""), SILENCE)

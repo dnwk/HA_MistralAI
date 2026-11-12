@@ -98,26 +98,38 @@ _LOGGER = logging.getLogger(__name__)
 # in the pipelined streaming engine to produce natural inter-sentence pauses.
 _INTER_SENTENCE_SILENCE: bytes = bytes(TTS_INTER_SENTENCE_SILENCE_BYTES)
 _INTER_SENTENCE_SILENCE_MS = 300
+# Silence appended after the last sentence of a streamed answer. Mistral's
+# audio ends exactly on the last phoneme, and many satellites and speakers
+# drop the final fraction of a second of a stream, which clips the last word
+# or makes the answer sound switched off rather than finished.
+_TRAILING_SILENCE_MS = 500
+# Mistral's usual format (24 kHz, 16-bit, mono) when a header can't be read.
+_FALLBACK_BYTES_PER_SECOND = 48_000
 
 
-def _silence_for_header(header: bytes) -> bytes:
-    """Return 300 ms of PCM silence matching the format in a WAV *header*.
+def _silence_for_header(header: bytes, ms: int = _INTER_SENTENCE_SILENCE_MS) -> bytes:
+    """Return *ms* milliseconds of PCM silence matching a WAV *header*.
 
     Reads channels (offset 22), sample rate (offset 24) and bits per sample
     (offset 34), all little-endian. If the header looks wrong, fall back to
-    the constant silence, which assumes Mistral's usual 24 kHz / 16-bit / mono.
+    Mistral's usual 24 kHz / 16-bit / mono.
     """
+    fallback = (
+        _INTER_SENTENCE_SILENCE
+        if ms == _INTER_SENTENCE_SILENCE_MS
+        else bytes(_FALLBACK_BYTES_PER_SECOND * ms // 1000)
+    )
     try:
         channels, sample_rate = struct.unpack_from("<HI", header, 22)
         (bits,) = struct.unpack_from("<H", header, 34)
     except struct.error:
-        return _INTER_SENTENCE_SILENCE
+        return fallback
     if not (1 <= channels <= 8 and 1 <= sample_rate <= 192_000):
-        return _INTER_SENTENCE_SILENCE
+        return fallback
     if bits < 8 or bits % 8:
-        return _INTER_SENTENCE_SILENCE
+        return fallback
     frame_bytes = channels * bits // 8
-    return bytes(sample_rate * _INTER_SENTENCE_SILENCE_MS // 1000 * frame_bytes)
+    return bytes(sample_rate * ms // 1000 * frame_bytes)
 
 # Static preset ids encode their language as a prefix ("en_paul_neutral",
 # "gb_jane_neutral"). Maps an HA language code to the static-id prefixes that
@@ -587,6 +599,7 @@ class MistralTTSEntity(TextToSpeechEntity):
 
         try:
             header_sent = False
+            header_used: bytes = b""
             silence = _INTER_SENTENCE_SILENCE
             sentences_with_audio = 0
             last_error: BaseException | None = None
@@ -602,6 +615,10 @@ class MistralTTSEntity(TextToSpeechEntity):
                             "Mistral TTS returned no audio for any sentence"
                             f"{detail}. Check the voice ID and the Home Assistant log."
                         )
+                    # End on a short silence so the last word isn't clipped
+                    # by players that drop the tail of a stream.
+                    if header_sent:
+                        yield _silence_for_header(header_used, _TRAILING_SILENCE_MS)
                     return
                 sentences_sent += 1
                 sentence_header: bytes | None = None
@@ -629,6 +646,7 @@ class MistralTTSEntity(TextToSpeechEntity):
                     if not header_sent and sentence_header is not None:
                         yield sentence_header
                         header_sent = True
+                        header_used = sentence_header
                         silence = _silence_for_header(sentence_header)
                     # A brief silence between sentences that really delivered
                     # audio. Without it the back-to-back per-sentence Mistral

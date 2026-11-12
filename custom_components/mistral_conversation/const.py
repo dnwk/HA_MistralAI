@@ -53,9 +53,11 @@ WEB_SEARCH_INSTRUCTIONS = (
     "top three to five headlines with one short sentence each and the outlet "
     "they come from; for prices and markets, the figure, the change, the date "
     "or time it applies to, and exactly what the figure measures (for example "
-    "an index level is not a fund's share price). Finish with a complete "
-    "sentence. Plain prose only: no markdown, lists, links or citations. Never "
-    "invent facts, figures or headlines."
+    "an index level is not a fund's share price). If nothing turns up for an "
+    "exact date or wording, give the most recent relevant results you found "
+    "and say when they are from, rather than saying nothing was found. Finish "
+    "with a complete sentence. Plain prose only: no markdown, lists, links or "
+    "citations. Only report what the search results say."
 )
 
 # Cap on remembered HA-conversation → Mistral-conversation mappings (oldest

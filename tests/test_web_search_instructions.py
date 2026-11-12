@@ -90,3 +90,24 @@ class ConversationsChatTests(_RealClientErrorAsync):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmptySearchAnswerTests(unittest.TestCase):
+    """Searches came back empty-handed when the model put today's date in the query."""
+
+    def test_tool_description_discourages_dates(self) -> None:
+        description = conv_module._web_search_tool_def()["function"]["parameters"]["properties"]["query"]["description"]
+        self.assertIn("Do not add today's date", description)
+
+    def test_instructions_fall_back_to_recent_results(self) -> None:
+        self.assertIn("most recent relevant results", WEB_SEARCH_INSTRUCTIONS)
+        self.assertIn("say when they are from", WEB_SEARCH_INSTRUCTIONS)
+
+
+class EmptyAnswerLoggingTests(_RealClientErrorAsync):
+    async def test_answer_is_logged_at_debug(self) -> None:
+        session = _SeqSession(_reply("mc-1", "Headline one. Headline two."))
+        entity, _ = _entity(session)
+        with self.assertLogs(conv_module._LOGGER.name, "DEBUG") as logs:
+            await entity._conversations_chat("mistral-small-latest", "latest news", "ha-1")
+        self.assertTrue(any("web search answer (27 chars" in r.getMessage() for r in logs.records))
