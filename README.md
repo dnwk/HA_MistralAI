@@ -300,28 +300,54 @@ Turn debug logging off again afterwards: the `Calling Mistral connector` line co
 
 #### Suggested connectors
 
-Mistral runs connectors from its own cloud, so a connector must be a **remote** MCP server — a public HTTP or SSE URL. The many local MCP servers that run as a program on your computer won't work unless you host them publicly. These suit a home voice assistant (checked November 2026 against vendor docs and MCP directories; not every one has been tried with this integration):
+Mistral runs connectors from its own cloud, so a connector must be a **remote** MCP server — a public HTTP URL. Local MCP servers that run as a program on your computer won't work unless you host them publicly. The list below only includes servers **run by the service's own vendor** (checked November 2026); community wrappers of someone else's API are left out because they come and go. None of these has been tried with this integration yet.
 
-| MCP server | What it adds | URL | Login | Can make changes? |
-|---|---|---|---|---|
-| **DeepWiki** | Nothing for the home, but it is the example in Mistral's own docs — a zero-setup first test that connectors work | `https://mcp.deepwiki.com/mcp` | none | no |
-| **[Google Maps Grounding Lite](https://developers.google.com/maps/ai/grounding-lite)** | Places, routes and travel times, weather anywhere: *"how long to drive to the airport?"* | `https://mapstools.googleapis.com/mcp` | API key in the `X-Goog-Api-Key` header; Google Cloud project with billing and the Grounding Lite API enabled | no |
-| **Open-Meteo weather** (run by Pipeworx) | Forecasts up to 16 days for any place; air-quality and marine packs too. Third-party, fair use | `https://gateway.pipeworx.io/open-meteo/mcp` | none | no |
-| **Notion** (official) | Household notes, shopping lists, recipes, your databases: *"add milk to my shopping list"* | `https://mcp.notion.com/mcp` | OAuth sign-in, no app to create | **yes** — creates and edits pages |
-| **[Google Calendar](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server)** (official) | *"What's on my calendar tomorrow?"*, new appointments | `https://calendarmcp.googleapis.com/mcp/v1` | OAuth 2.0; Google Cloud project and OAuth client (Developer Preview) | **yes** — creates, updates and deletes events |
-| **[Gmail](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server)** (official) | *"Any mail from the school today?"* | `https://gmailmcp.googleapis.com/mcp/v1` | OAuth 2.0; Gmail MCP API enabled separately (Developer Preview) | **yes** — drafts at least; sources disagree on sending |
+Mistral Studio can connect three kinds of server: **no login**, **API key** (sent as a header, for example `Authorization: Bearer …`), and **OAuth** (Studio asks for an OAuth client ID and secret).
 
-**Adding one:** in **Mistral Studio → Connectors**, add a custom MCP connector with the URL (and the header, for Google Maps), then connect it — OAuth connectors must be connected there. If it is private, the API key needs the *Private and shared connectors* scope. The integration picks it up within 10 minutes; with debug logging on it appears in `Mistral connectors available: …`.
+**No setup needed — good first tests**
+
+| Server | What you can ask | URL | Changes things? |
+|---|---|---|---|
+| **[Kiwi.com](https://www.kiwi.com/ag/pages/mcp/)** flight search | *"Cheapest flight to Lisbon next weekend?"* | `https://mcp.kiwi.com` | no (search; booking is a link) |
+| **Exa** search | Web questions; works with a Ministral chat model too, unlike *Web search* | `https://mcp.exa.ai/mcp` | no — free with rate limits; add an Exa API key in an `x-api-key` header for more |
+| **AfterShip** package tracking | *"Where is my parcel 1Z…?"* | `https://mcp.aftership.com/tracking/public` | no — free for personal use, rate-limited; endpoint found in a directory listing, not yet on AfterShip's own docs |
+
+**API key**
+
+| Server | What you can ask | URL | Key |
+|---|---|---|---|
+| **[AccuWeather](https://developer.accuweather.com/documentation/weather-mcp-client-connection)** | Forecasts and conditions anywhere, beyond your home weather entity | `https://dataservice.accuweather.com/mcp` | AccuWeather API key in the `Authorization` header |
+| **[Xweather](https://www.xweather.com/blog/introducing-the-xweather-mcp-server)** | Forecasts, alerts, radar-type data | `https://mcp.api.xweather.com/mcp` | existing Xweather API credentials (paid) |
+| **[Google Maps Grounding Lite](https://developers.google.com/maps/ai/grounding-lite)** | Places, routes and travel times: *"how long to drive to the airport?"* | `https://mapstools.googleapis.com/mcp` | Google Maps API key in the `X-Goog-Api-Key` header; Google Cloud project with billing and the Grounding Lite API enabled |
+| **[Tavily](https://docs.tavily.com/documentation/mcp)** search | Web questions | `https://mcp.tavily.com/mcp/` | Tavily API key (in the URL as `?tavilyApiKey=…`) or OAuth |
+
+**OAuth — lists, notes, calendar, mail**
+
+| Server | What you can ask | URL | Changes things? |
+|---|---|---|---|
+| **Todoist** (by Doist) | *"Add batteries to my shopping list"*, *"what's due today?"* | `https://ai.todoist.net/mcp` | **yes** — adds and completes tasks |
+| **Notion** | Household notes, recipes, lists, databases | `https://mcp.notion.com/mcp` | **yes** — creates and edits pages |
+| **[Google Calendar](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server)** | *"What's on tomorrow?"* | `https://calendarmcp.googleapis.com/mcp/v1` | **yes** — creates, updates, deletes events |
+| **[Gmail](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server)** | *"Any mail from the school today?"* | `https://gmailmcp.googleapis.com/mcp/v1` | **yes** — drafts at least |
+| **[Google Drive](https://developers.google.com/workspace/drive/api/guides/configure-mcp-server)** | Find and read household documents | `https://drivemcp.googleapis.com/mcp/v1` | **yes** with write scopes; ask for `drive.readonly` |
+
+Google's servers are in Developer Preview and need a Google Cloud project with the matching *… MCP API* enabled (separately from the normal API) and an OAuth client whose ID and secret you enter in Mistral Studio. Notion and Todoist register their own OAuth client; if Studio still asks for an ID and secret, follow its prompts.
+
+**One connector for many apps**
+
+- **[Zapier MCP](https://docs.zapier.com/mcp/get-started/quickstart)** — create a server at mcp.zapier.com, pick exactly which actions it exposes (for example *add to Google Tasks*, *play on Spotify*, *send me an SMS*), and use the server URL it generates as the connector URL. Treat that URL as a password. Choosing actions there is also the easiest way to keep write actions out today. Each call uses 2 Zapier tasks.
+- **[Pipedream MCP](https://pipedream.com/docs/connect/mcp/developers)** — thousands of apps behind `https://remote.mcp.pipedream.net/v3`, but it needs a Pipedream project, OAuth client credentials and per-user headers; aimed at developers, and in beta.
+
+**Looked at but not listed:** Instacart's MCP server needs a partner agreement; Microsoft's official Outlook mail/calendar servers need a Microsoft 365 Copilot business tenant; Tesla/Tessie and 17TRACK servers found were community-built.
 
 **Before you add one:**
 
-- **Check what Home Assistant already covers.** Your weather entity answers weather at home, and calendar or to-do entities exposed to Assist are answered by Home Assistant directly, without sending the data through Mistral. Connectors add the most where Home Assistant has nothing: maps and travel, Notion, mail.
-- **Write tools act without confirmation.** Notion, Calendar and Gmail can change things, a voice assistant can mishear, and the integration offers all of a connector's tools. Prefer read-only access where the service lets you choose, and switch **Use my Mistral connectors** off if needed.
-- **Google's Calendar and Gmail servers need your own registered OAuth client.** It is not confirmed that Mistral Studio's connect flow supports that; Notion registers itself and should be easier.
-- Several of these are previews, so endpoints and limits may change.
-- Connectors you already connected in Le Chat (its directory has 60+) appear only if Mistral's API lists them for your key — check the debug log.
+- **Check what Home Assistant already covers.** Your weather entity answers weather at home, and calendar or to-do entities exposed to Assist are answered by Home Assistant directly, without sending the data through Mistral. Connectors add the most where Home Assistant has nothing: travel, parcels, mail, notes.
+- **Write tools act without confirmation.** Todoist, Notion, Calendar, Gmail and Drive can change things, a voice assistant can mishear, and the integration offers all of a connector's tools. Use read-only scopes where the service offers them, or a Zapier server limited to the actions you want.
+- Previews and free tiers change; Mistral's [connector troubleshooting article](https://help.mistral.ai/en/articles/457412-how-do-i-fix-mcp-connector-connection-errors) covers common connection errors.
+- Connectors you already connected in Le Chat (its directory has 60+ vendor integrations) appear only if Mistral's API lists them for your key — check the debug log.
 
-**Finding more:** [mcpservers.org — remote servers](https://mcpservers.org/remote-mcp-servers), [awesome-remote-mcp-servers](https://github.com/sylviangth/awesome-remote-mcp-servers), [free-remote-mcp-servers](https://github.com/shortformkit/free-remote-mcp-servers) (keyless servers, re-tested weekly), [awesome-mistral-connectors](https://github.com/rdmgator12/awesome-mistral-connectors) and [Mistral's MCP connector docs](https://docs.mistral.ai/le-chat/knowledge-integrations/connectors/mcp-connectors). These are community lists; check an endpoint before relying on it.
+**Finding more:** prefer a vendor's own developer docs ("MCP server" in their API documentation) and [Mistral's Le Chat connector directory](https://docs.mistral.ai/le-chat/knowledge-integrations/connectors/mcp-connectors). [free-remote-mcp-servers](https://github.com/shortformkit/free-remote-mcp-servers) lists keyless remote servers and re-tests them weekly, but most are community-run; check who operates a server before giving it access to your accounts.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
