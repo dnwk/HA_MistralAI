@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -232,6 +233,41 @@ class ToolResultTests(unittest.TestCase):
     def test_old_name(self) -> None:
         messages = conv_module._convert_chat_log_to_messages(self._chat_log("tool_result"))
         self.assertEqual(json.loads(messages[-1]["content"]), {"success": True})
+
+    def _with_tool_result(self, tool_result):
+        chat_log = self._chat_log("result")
+        chat_log.content[1].result = tool_result
+        return json.loads(conv_module._convert_chat_log_to_messages(chat_log)[-1]["content"])
+
+    def test_ha_2026_11_tool_result_object(self) -> None:
+        """HA 2026.11.1: `result` is an llm.ToolResult, which json.dumps can't encode.
+
+        Every turn in which the model used a Home Assistant tool failed with
+        "TypeError: Object of type ToolResult is not JSON serializable".
+        """
+
+        @dataclass(slots=True)
+        class ToolResult:  # same shape as homeassistant.helpers.llm.ToolResult
+            data: dict
+            error: bool = False
+
+        self.assertEqual(
+            self._with_tool_result(ToolResult(data={"forecast": [{"temperature": 12}]})),
+            {"forecast": [{"temperature": 12}]},
+        )
+        self.assertEqual(
+            self._with_tool_result(
+                ToolResult(data={"error": "HomeAssistantError", "error_text": "boom"}, error=True)
+            ),
+            {"error": "HomeAssistantError", "error_text": "boom"},
+        )
+        self.assertEqual(
+            self._with_tool_result(ToolResult(data={"reason": "x"}, error=True)),
+            {"error": True, "reason": "x"},
+        )
+
+    def test_unexpected_result_never_crashes(self) -> None:
+        self.assertIsInstance(self._with_tool_result(object()), str)
 
 
 if __name__ == "__main__":

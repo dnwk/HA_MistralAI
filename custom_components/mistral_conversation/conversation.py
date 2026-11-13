@@ -423,6 +423,29 @@ async def _apis_for_request(
     return kept or None
 
 
+_MISSING = object()
+
+
+def _tool_result_data(res: Any) -> Any:
+    """The JSON data of a tool result, on old and new Home Assistant versions.
+
+    HA 2026.11 keeps an ``llm.ToolResult`` in ``result``: the data plus an
+    ``error`` flag, and not JSON serializable itself. Its old ``tool_result``
+    (the data) is deprecated and logs a warning. Earlier versions only have
+    ``tool_result``. A failed tool's data is marked with ``"error": True``
+    unless it already says what went wrong.
+    """
+    result = getattr(res, "result", _MISSING)
+    if result is _MISSING:
+        return res.tool_result
+    if hasattr(result, "data"):
+        data = result.data
+        if getattr(result, "error", False) and isinstance(data, dict) and "error" not in data:
+            return {"error": True, **data}
+        return data
+    return result
+
+
 def _convert_chat_log_to_messages(
     chat_log: conversation.ChatLog,
 ) -> list[dict[str, Any]]:
@@ -480,18 +503,11 @@ def _convert_chat_log_to_messages(
 
                 for tc in content.tool_calls:
                     if res := tool_results.get(tc.id):
-                        # HA renamed tool_result to result and warns on the
-                        # old name; older HA versions only have tool_result.
-                        result = res.result if hasattr(res, "result") else res.tool_result
                         messages.append({
                             "role": "tool",
                             "tool_call_id": _to_mistral_id(str(res.tool_call_id)),
                             "name": str(res.tool_name),
-                            "content": json.dumps(
-                                _sanitize(result)
-                                if isinstance(result, (dict, list))
-                                else result
-                            ),
+                            "content": json.dumps(_sanitize(_tool_result_data(res))),
                         })
             else:
                 messages.append({"role": "assistant", "content": str(content.content or "")})
